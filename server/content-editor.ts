@@ -139,12 +139,14 @@ function applySeoUpdatesAfterWrite<T extends { success: boolean; error?: string;
 }
 
 /**
- * Draft/variant section saves: only identity-check touched section indexes.
- * Live locale / full-list rewrites: omit onlyValidateIndexes (full document).
+ * Section saves (live, draft, variant) only identity-check the section indexes
+ * the operations touch, plus newly inserted sections (`skipIdentityIndexes`),
+ * so problems in untouched sections never block an unrelated edit. An empty
+ * set means no section was touched and nothing is checked. Reorder /
+ * replace-all omit onlyValidateIndexes (full document).
  * Publish/promote never passes this (always full via validateYamlIdentity).
  */
-function identityValidateOptsForWrite(opts: {
-  isDraftOrVariantWrite: boolean;
+export function identityValidateOptsForWrite(opts: {
   operations: EditOperation[];
   skipIdentityIndexes?: Set<number>;
   contentType: string;
@@ -160,11 +162,13 @@ function identityValidateOptsForWrite(opts: {
     contentSlug: opts.contentSlug,
     skipIdentityIndexes: opts.skipIdentityIndexes,
   };
-  if (!opts.isDraftOrVariantWrite) return base;
   const touched = collectTouchedSectionIndexes(opts.operations);
-  if (!touched || touched.size === 0) return base;
+  if (!touched) return base;
+  opts.skipIdentityIndexes?.forEach((idx) => touched.add(idx));
   return { ...base, onlyValidateIndexes: touched };
-}import {
+}
+
+import {
   isEntryDetached,
   isSharedLayoutType,
   isTemplateVersioningSlug,
@@ -857,7 +861,6 @@ export async function editContent(request: ContentEditRequest): Promise<{
         ci,
         // Draft template variants must not fan out onto live sibling shells
         skipSharedLayoutFanOut: hasVariant || request.skipSharedLayoutFanOut,
-        isDraftOrVariantWrite: hasVariant,
       }),
         seoUpdates,
         {
@@ -916,7 +919,6 @@ export async function editContent(request: ContentEditRequest): Promise<{
           database: request.database,
           ci,
           skipSharedLayoutFanOut: request.skipSharedLayoutFanOut,
-          isDraftOrVariantWrite: hasVariant,
         }),
         seoUpdates,
         {
@@ -1159,7 +1161,6 @@ export async function editContent(request: ContentEditRequest): Promise<{
               database: request.database,
               ci,
               skipSharedLayoutFanOut: request.skipSharedLayoutFanOut,
-              isDraftOrVariantWrite: hasVariant,
             });
             if (!templateResult.success) {
               return { success: false, error: templateResult.error };
@@ -1405,8 +1406,8 @@ export async function editContent(request: ContentEditRequest): Promise<{
       }
       if (typeof opResult.insertedSectionIndex === "number") {
         // Newly duplicated sections may be invalid until staff re-sets conversion/ecommerce.
-        // Allow the duplicate write itself; draft later saves scope to touched sections;
-        // live saves + publish still validate the full document.
+        // Allow the duplicate write itself; later saves scope to touched sections;
+        // publish still validates the full document.
         skipIdentityValidationIndexes.add(opResult.insertedSectionIndex);
       }
     }
@@ -1424,13 +1425,12 @@ export async function editContent(request: ContentEditRequest): Promise<{
     }
 
     // Validate conversion / CTA / product-scope identity before writing to disk.
-    // Draft/variant: only touched sections (avoids circular trap after duplicate wipe).
-    // Live locale: full document. Publish/promote always full (versioning routes).
+    // Only touched sections (live, draft, variant); publish/promote always full
+    // (versioning routes).
     if (Array.isArray(localeData.sections)) {
       const identityErr = validateDocIdentity(
         localeData,
         identityValidateOptsForWrite({
-          isDraftOrVariantWrite: hasVariant,
           operations: resolvedOperations,
           skipIdentityIndexes: skipIdentityValidationIndexes,
           contentType,
@@ -1760,8 +1760,6 @@ function writeStructuralChangesToTemplate(opts: {
   requesterId?: string;
   ci?: ContentIndex;
   skipSharedLayoutFanOut?: boolean;
-  /** When true (draft/variant template), identity-check only touched sections. */
-  isDraftOrVariantWrite?: boolean;
 }): {
   success: boolean;
   error?: string;
@@ -1863,7 +1861,6 @@ function writeStructuralChangesToTemplate(opts: {
       const identityErr = validateDocIdentity(
         templateData,
         identityValidateOptsForWrite({
-          isDraftOrVariantWrite: Boolean(opts.isDraftOrVariantWrite),
           operations: annotatedOps,
           skipIdentityIndexes,
           contentType,
@@ -2171,8 +2168,6 @@ function handleSharedTemplateEdit(opts: {
   ci?: ContentIndex;
   requesterId?: string;
   skipSharedLayoutFanOut?: boolean;
-  /** Draft/variant template writes scope identity to touched sections. */
-  isDraftOrVariantWrite?: boolean;
 }): {
   success: boolean;
   error?: string;
@@ -2218,7 +2213,6 @@ function handleSharedTemplateEdit(opts: {
       requesterId,
       ci,
       skipSharedLayoutFanOut: opts.skipSharedLayoutFanOut,
-      isDraftOrVariantWrite: opts.isDraftOrVariantWrite,
     });
   }
 

@@ -23,7 +23,7 @@ vi.mock("./content-types", async (importOriginal) => {
   };
 });
 
-import { findCanonicalSoftMatch, inspectRedirect, isLivePublicUrl, mergeQueryIntoTarget, resolveRedirectRequestLocale, testRedirect } from "./redirects";
+import { findCanonicalSoftMatch, inspectRedirect, isLivePublicUrl, isSelfRedirectTarget, mergeQueryIntoTarget, resolveRedirectRequestLocale, testRedirect } from "./redirects";
 import { canonicalizePillarPath } from "./seo-fields";
 import { applyRedirectTraceCookie } from "./redirect-trace-cookie";
 import {
@@ -54,6 +54,32 @@ function makeCi(opts: {
     refreshCustomRedirects: () => redirects,
   } as unknown as typeof ContentIndexType;
 }
+
+describe("isSelfRedirectTarget", () => {
+  const host = "business.4geeks.com";
+
+  it("flags a redirect back to the same path", () => {
+    expect(isSelfRedirectTarget("/en/home", host, "/en/home")).toBe(true);
+  });
+
+  it("flags a same-path target that only adds a query string", () => {
+    expect(isSelfRedirectTarget("/en/home", host, "/en/home?utm_source=x")).toBe(true);
+  });
+
+  it("flags an absolute same-host target with the same path", () => {
+    expect(isSelfRedirectTarget("/en/home", host, "https://business.4geeks.com/en/home")).toBe(true);
+  });
+
+  it("allows case and trailing-slash canonicalization", () => {
+    expect(isSelfRedirectTarget("/en/Home", host, "/en/home")).toBe(false);
+    expect(isSelfRedirectTarget("/en/home/", host, "/en/home")).toBe(false);
+  });
+
+  it("allows different paths and other hosts", () => {
+    expect(isSelfRedirectTarget("/", host, "/en/home")).toBe(false);
+    expect(isSelfRedirectTarget("/en/home", host, "https://4geeks.com/en/home")).toBe(false);
+  });
+});
 
 describe("resolveRedirectRequestLocale", () => {
   it("prefers /es/ path prefix over English Accept-Language", () => {

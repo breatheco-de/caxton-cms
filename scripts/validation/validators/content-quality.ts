@@ -82,7 +82,7 @@ export const contentQualityValidator: Validator = {
     let emptyFields = 0;
     let brokenLinks = 0;
 
-    const publicUrls = createPublicUrlResolver(contentIndex);
+    const publicUrls = createPublicUrlResolver(context.contentIndex ?? contentIndex);
     const liveFileSet = new Set(liveFilesForSeo(context));
 
     for (const file of context.contentFiles) {
