@@ -2966,7 +2966,10 @@ export function registerPageTools(
               summary: `Background job ${jobId} will write validation-cache.json when completed.`,
             }],
             next_actions: diagnosticsJobNextActions({
-              body: { status: data.status ?? "queued", job_id: jobId },
+              body: {
+                status: typeof data.status === "string" ? data.status : "queued",
+                job_id: jobId,
+              },
               site,
               issueList: {
                 ...(open_issues_limit != null ? { open_issues_limit } : {}),
