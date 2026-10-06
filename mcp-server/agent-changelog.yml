@@ -5,6 +5,18 @@
 window_days: 6
 
 entries:
+  - date: "2026-10-05"
+    summary: "update_issue complete returns a diagnostics job instead of archiving in one call"
+    agent_impact:
+      - "update_issue action complete no longer archives in that call. The first response matches run_entry_diagnostics: status queued or busy, job_id, retry_after_seconds, and next_actions to get_diagnostics_job. The issue is not archived and traffic is not saved. Claim, release, and uncomplete are unchanged."
+      - "Poll GET /api/validation/diagnostics-jobs/:jobId via get_diagnostics_job. When status is completed and the job purpose is complete_issue, next_actions adds update_issue complete with that job_id. That second call archives (auto_completed_ids) or refuses with complete_rejected_still_open."
+      - "DUPLICATE_TITLE and DUPLICATE_DESCRIPTION use the site-wide diagnostics child. If that child is already running, complete returns busy and the issue stays open. A normal page issue uses the shared child and does not wait on the site-wide job."
+    tools_changed: true
+    paths:
+      - mcp-server/tools/pages.ts
+      - mcp-server/lib/respond.ts
+      - server/routes/validation.ts
+      - server/services/diagnosticsJobService.ts
   - date: "2026-10-02"
     summary: "Signup GTM event uses the same lead dataLayer body as other form conversions"
     agent_impact:

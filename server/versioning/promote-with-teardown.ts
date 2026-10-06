@@ -46,7 +46,6 @@ import { ensurePublishedAtOnce } from "../published-at";
 import { clearSsrSchemaCache } from "../ssr-schema";
 import { invalidateContentCaches } from "../routes/_helpers";
 import { buildEntryKey } from "../../scripts/validation/shared/entryKey";
-import { scheduleOnSaveValidation } from "../services/onSaveValidation";
 import { emitEntryLocalePromoted } from "../content-events";
 import { refreshSitemapEntriesForContentKey } from "../sitemap";
 import { findTopLevelKeySpan, surgicalRemoveTopLevelKey } from "../seo-fields";
@@ -782,16 +781,6 @@ export async function promoteVariantWithOptionalTeardown(
       refreshSitemapEntriesForContentKey(contentType, slug, [locale]);
     }
 
-    scheduleOnSaveValidation({
-      contentRoot,
-      contentRootName,
-      ci,
-      cache,
-      contentType,
-      slug,
-      locale,
-      filePath: defaultFilePath,
-    });
     await cache.flush();
 
     emitEntryLocalePromoted({

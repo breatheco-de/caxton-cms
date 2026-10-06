@@ -1374,13 +1374,4 @@ export class DatabaseManager {
   }
 }
 
-/** Cached mapped row count for a database (0 when configured but not yet fetched). */
-export function getCachedDatabaseEntryCount(dbm: DatabaseManager, dbName: string): number {
-  if (!dbName) return 0;
-  const stats = dbm.getCacheStats().perDb[dbName];
-  if (stats) return stats.item_count;
-  if (!dbm.exists(dbName)) return 0;
-  return dbm.getMappedItems(dbName)?.length ?? 0;
-}
-
 export const databaseManager = new DatabaseManager();

@@ -3,7 +3,8 @@ import { getDefaultContentRoot } from "../site-config";
 import * as fs from "fs";
 import * as path from "path";
 import { ValidationService } from "../../scripts/validation/service";
-import { getCanonicalUrl, matchContentFilesForUrl } from "../../scripts/validation/shared/canonicalUrls";
+import { getCanonicalUrl } from "../../scripts/validation/shared/canonicalUrls";
+import type { ContentFile } from "../../scripts/validation/shared/types";
 import {
   getValidationCacheService,
   claimToApiRow,
@@ -26,6 +27,7 @@ import {
   listDiagnosticsJobs,
   maybeReloadValidationCache,
   startDiagnosticsJob,
+  diagnosticsHttpStatus,
   DiagnosticsScopeError,
   type DiagnosticsJobRecord,
 } from "../services/diagnosticsJobService";
@@ -261,6 +263,23 @@ export function registerValidationRoutes(app: Express): void {
   app.post("/api/validation/run", async (req, res) => {
     try {
       const { validators: validatorNames, includeArtifacts, scope } = req.body;
+      const names = Array.isArray(validatorNames) ? validatorNames.map(String) : [];
+      const imageNames = new Set(["images", "image-tags", "hero-image-tags", "image-optimization"]);
+      if (names.length > 0 && names.every((n) => imageNames.has(n))) {
+        const site = res.locals.site as { contentRootName?: string } | undefined;
+        const result = await startDiagnosticsJob({
+          contentRoot: getContentRoot(res),
+          contentRootName: site?.contentRootName ?? path.basename(getContentRoot(res)),
+          ci: getCI(res),
+          cache: getValidationCache(res),
+          validators: names,
+          include_artifacts: includeArtifacts === true,
+          freshness: "hard",
+          confirm: true,
+          kind: "images",
+        });
+        return res.status(diagnosticsHttpStatus(result)).json(result);
+      }
 
       const service = new ValidationService();
       const context = await service.buildContext({
@@ -317,82 +336,25 @@ export function registerValidationRoutes(app: Express): void {
         }
       }
 
-      const service = new ValidationService();
-      await service.buildContext({ contentRoot: getContentRoot(res), ci: getCI(res) });
+      const names = Array.isArray(validatorNames) ? validatorNames.map(String) : undefined;
+      const site = res.locals.site as { contentRootName?: string } | undefined;
+      const contentRoot = getContentRoot(res);
+      const job = await startDiagnosticsJob({
+        contentRoot,
+        contentRootName: site?.contentRootName ?? path.basename(contentRoot),
+        ci: getCI(res),
+        cache: getValidationCache(res),
+        urls: [url],
+        validators: names,
+        freshness: "hard",
+        confirm: true,
+        kind: "run-page",
+        entry: variant
+          ? { contentType: "", slug: "", locale: "", variant }
+          : undefined,
+      });
+      return res.status(diagnosticsHttpStatus(job)).json(job);
 
-      const context = service.getContext();
-      if (!context) {
-        return res.status(500).json({ error: "Failed to build validation context" });
-      }
-
-      const allContentFiles = context.contentFiles;
-      const parsed = getCI(res).parseContentUrl(url);
-      const filteredFiles = matchContentFilesForUrl(
-        allContentFiles,
-        url,
-        parsed,
-        variant,
-      );
-
-      if (variant && filteredFiles.length === 0) {
-        return res.json({
-          skipped: true,
-          reason: "unpublished_variant",
-          message:
-            "This variant isn’t published (0% traffic). Diagnostics run after you assign traffic.",
-          validators: [],
-          summary: { passed: 0, failed: 0, warnings: 0 },
-        });
-      }
-
-      context.contentFiles = filteredFiles;
-
-      let effectiveValidators = validatorNames as string[] | undefined;
-      if (effectiveValidators) {
-        effectiveValidators = effectiveValidators.filter(
-          (n) =>
-            isEntryLocalValidator(n) &&
-            !DIAGNOSTICS_SKIP_FOR_PER_PAGE.has(n) &&
-            n !== "lighthouse",
-        );
-      } else {
-        effectiveValidators = [
-          ...ENTRY_LOCAL_VALIDATOR_NAMES.filter((n) =>
-            allPageValidators.some((v) => v.name === n),
-          ),
-        ];
-      }
-
-      let result;
-      try {
-        result = await service.runValidators({
-          validators: effectiveValidators,
-          includeArtifacts: false,
-        });
-      } finally {
-        context.contentFiles = allContentFiles;
-      }
-
-      try {
-        const cache = getValidationCache(res);
-        const entryKeys = filteredFiles.map((f) => entryKeyFromContentFile(f));
-        for (const file of filteredFiles) {
-          if (!file.variant) {
-            cache.registerUrl(getCanonicalUrl(file), entryKeyFromContentFile(file));
-          }
-        }
-        cache.applyValidatorResults(result.validators, {
-          contentFiles: allContentFiles,
-          entryKeys,
-          markSiteWide: false,
-          skippedContentTypes: context.skippedContentTypes,
-        });
-        await cache.flush();
-      } catch (err) {
-        log.warn({ err }, "ValidationCache post-process error (non-fatal)");
-      }
-
-      res.json(result);
     } catch (error) {
       log.error({ err: error }, "Validation run-page error:");
       res.status(500).json({
@@ -503,24 +465,19 @@ export function registerValidationRoutes(app: Express): void {
     const auth = await requireMutatingStaff(req, res);
     if (!auth.authorized) return;
     try {
-      const { formatAsJson } = await import("../../scripts/validation/reporting/json");
-      const fs = await import("fs");
-      const path = await import("path");
-
-      const service = new ValidationService();
-      await service.buildContext({ contentRoot: getContentRoot(res), ci: getCI(res) });
-
-      const result = await service.runValidators({ includeArtifacts: true });
-
-      const timestamp = new Date().toISOString();
-      const fileName = `report-${timestamp.replace(/[:.]/g, "-")}.json`;
-      const dir = "/tmp/validation-reports";
-      const filePath = path.join(dir, fileName);
-
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(filePath, formatAsJson(result, { pretty: true, includeTimestamp: true }), "utf-8");
-
-      res.json({ ok: true, path: filePath, timestamp, summary: result.summary });
+      const site = res.locals.site as { contentRootName?: string } | undefined;
+      const contentRoot = getContentRoot(res);
+      const result = await startDiagnosticsJob({
+        contentRoot,
+        contentRootName: site?.contentRootName ?? path.basename(contentRoot),
+        ci: getCI(res),
+        cache: getValidationCache(res),
+        freshness: "hard",
+        confirm: true,
+        kind: "save-report",
+        purpose: { type: "save_report" },
+      });
+      return res.status(diagnosticsHttpStatus(result)).json(result);
     } catch (error) {
       log.error({ err: error }, "Save-report error:");
       res.status(500).json({
@@ -538,6 +495,22 @@ export function registerValidationRoutes(app: Express): void {
 
       const contentRoot: string = (res.locals.site as any)?.contentRoot
         ?? getDefaultContentRoot();
+
+      if (name === "redirects") {
+        const site = res.locals.site as { contentRootName?: string } | undefined;
+        const result = await startDiagnosticsJob({
+          contentRoot,
+          contentRootName: site?.contentRootName ?? path.basename(contentRoot),
+          ci: getCI(res),
+          cache: getValidationCache(res),
+          validators: ["redirects"],
+          include_artifacts: includeArtifacts === true,
+          freshness: "hard",
+          confirm: true,
+          kind: "redirects",
+        });
+        return res.status(diagnosticsHttpStatus(result)).json(result);
+      }
 
       const service = new ValidationService();
       const context = await service.buildContext({ contentRoot, ci: getCI(res) });
@@ -1163,8 +1136,77 @@ export function registerValidationRoutes(app: Express): void {
 
     const agent_session_id = resolveAgentSessionId(req);
     if (action === "complete") {
+      const contentRoot = getContentRoot(res);
+      const siteName =
+        (res.locals.site as { contentRootName?: string } | undefined)?.contentRootName ??
+        path.basename(contentRoot);
+      const requestedJobId = typeof req.body?.job_id === "string" ? req.body.job_id.trim() : "";
+      if (!requestedJobId) {
+        const issue = cache.getIssueById(issueId);
+        if (!issue) {
+          return res.status(404).json({ error: `Unknown issue id: ${issueId}`, code: "unknown_issue" });
+        }
+        const duplicate = issue.code === "DUPLICATE_TITLE" || issue.code === "DUPLICATE_DESCRIPTION";
+        const entryTarget = issue.targets.find(
+          (t: { type?: string; entryKey?: string }) => t.type === "entry" && !!t.entryKey,
+        );
+        const parts = entryTarget?.entryKey?.split("@")[0]?.split("/") ?? [];
+        const variant = entryTarget?.entryKey?.includes("@")
+          ? entryTarget.entryKey.split("@")[1]
+          : undefined;
+        const entry =
+          parts.length >= 3
+            ? {
+                contentType: parts[0]!,
+                slug: parts[1]!,
+                locale: parts[2]!,
+                ...(variant ? { variant } : {}),
+              }
+            : undefined;
+        const started = await startDiagnosticsJob({
+          contentRoot,
+          contentRootName: siteName,
+          ci: getCI(res),
+          cache,
+          freshness: "hard",
+          confirm: true,
+          kind: duplicate ? "seo-duplicates" : "entry-complete",
+          slugs: !duplicate && entry ? [entry.slug] : undefined,
+          entry: duplicate ? undefined : entry,
+          purpose: {
+            type: "complete_issue",
+            issueId,
+            ...(entry ?? {}),
+          },
+        });
+        return res.status(diagnosticsHttpStatus(started)).json(started);
+      }
+
+      const looked = getDiagnosticsJob(contentRoot, requestedJobId);
+      if (looked.status !== "completed" || !looked.job) {
+        const http = looked.status === "not_found" ? 404 : looked.status === "failed" ? 409 : 200;
+        return res.status(http).json({
+          status: looked.status,
+          job_id: requestedJobId,
+          retry_after_seconds: looked.retry_after_seconds ?? 0,
+          code: looked.code ?? looked.job?.code,
+          message: looked.message ?? looked.job?.error,
+          error: looked.job?.error,
+        });
+      }
+      if (
+        looked.job.purpose?.type !== "complete_issue" ||
+        looked.job.purpose.issueId !== issueId
+      ) {
+        return res.status(400).json({
+          error: "That job is not the check for this issue.",
+          code: "job_mismatch",
+        });
+      }
+
       const issueBefore = cache.getIssueById(issueId);
       const verified = await verifiedCompleteIssue({
+        skipRevalidation: true,
         cache,
         archive: getResolvedIssuesArchive(res),
         ci: getCI(res),
@@ -1418,6 +1460,9 @@ export function registerValidationRoutes(app: Express): void {
         : result.message,
       validators: job.validatorResults,
       cache_updated: result.status === "completed",
+      purpose: job.purpose,
+      code: job.code,
+      reportPath: job.reportPath,
       log: Array.isArray((job as DiagnosticsJobRecord).log)
         ? (job as DiagnosticsJobRecord).log
         : [],
@@ -1528,16 +1573,53 @@ export function registerValidationRoutes(app: Express): void {
         }
       }
 
-      const service = new ValidationService();
-      const context = await ensureSiteContext(service, res);
-
-      const parsed = getCI(res).parseContentUrl(url);
-      const matchingFiles = matchContentFilesForUrl(
-        context.contentFiles,
-        url,
-        parsed,
-        variant,
-      );
+      const ciPage = getCI(res);
+      const parsed = ciPage.parseContentUrl(url);
+      const resolvedPage = ciPage.resolveUrl(url.split("?")[0]);
+      const pageType = parsed?.contentType ?? resolvedPage?.contentType ?? null;
+      const pageSlug = parsed?.slug ?? resolvedPage?.slug ?? null;
+      const pageLocale =
+        parsed?.locale ||
+        (resolvedPage?.patternLocale && resolvedPage.patternLocale !== "default"
+          ? resolvedPage.patternLocale
+          : null) ||
+        (url.startsWith("/es/") ? "es" : url.startsWith("/en/") ? "en" : "en");
+      const mergedPage =
+        pageType && pageSlug
+          ? ciPage.loadMergedContent(pageType, pageSlug, pageLocale, variant || undefined)
+          : null;
+      const pageFile = mergedPage?.data
+        ? {
+            slug: pageSlug!,
+            title:
+              typeof mergedPage.data.title === "string" ? mergedPage.data.title : pageSlug!,
+            type: pageType!,
+            locale: pageLocale,
+            filePath: mergedPage.filePath,
+            url,
+            variant: variant || undefined,
+            meta: (mergedPage.data.meta ?? {}) as {
+              page_title?: string;
+              description?: string;
+              og_image?: string;
+              canonical_url?: string;
+              robots?: string;
+              redirects?: string[];
+            },
+            isDraft: false,
+          }
+        : null;
+      let matchingFiles = (pageFile ? [pageFile] : []) as ContentFile[];
+      if (variant && pageType && pageSlug && matchingFiles.length > 0) {
+        const versioningManager =
+          (res.locals.site as any)?.versioningManager ?? getVersioningManager();
+        const ver = versioningManager.getVersioningForContent(pageType, pageSlug) || {};
+        const row = (ver[pageLocale]?.variants ?? []).find(
+          (v: { slug: string }) => v.slug === variant,
+        );
+        if ((row?.allocation ?? 0) <= 0) matchingFiles = [];
+      }
+      const pageRawData = (mergedPage?.data ?? {}) as Record<string, unknown>;
       const urlLocale =
         parsed?.locale ||
         (url.startsWith("/es/") ? "es" : url.startsWith("/en/") ? "en" : null);
@@ -1556,20 +1638,11 @@ export function registerValidationRoutes(app: Express): void {
           const locVariants = ver[locale]?.variants ?? [];
           const row = locVariants.find((v: { slug: string }) => v.slug === variant);
           allocation = row?.allocation ?? 0;
-          const liveFiles = matchContentFilesForUrl(
-            context.contentFiles,
-            url,
-            parsed,
-            null,
-          );
-          draftOnly = liveFiles.every((f) => f.isDraft) && liveFiles.length > 0;
-          if (!row && liveFiles.length === 0) {
-            // still resolve draft-only from any matching slug files
-            const any = context.contentFiles.filter(
-              (f) => f.type === contentType && f.slug === slug,
-            );
-            draftOnly = any.length > 0 && any.every((f) => f.isDraft || f.variant);
-          }
+          const liveMerged =
+            contentType && slug
+              ? ciPage.loadMergedContent(contentType, slug, locale)
+              : null;
+          draftOnly = !liveMerged?.data;
         }
         const entryKey =
           contentType && slug
@@ -1648,29 +1721,7 @@ export function registerValidationRoutes(app: Express): void {
         allocationPct = row?.allocation ?? undefined;
       }
 
-      let rawData: Record<string, unknown> = {};
-      try {
-        const commonPath = path.join(
-          path.dirname(file.filePath),
-          "_common.yml",
-        );
-        if (fs.existsSync(commonPath)) {
-          const commonData =
-            (safeYamlLoad(fs.readFileSync(commonPath, "utf-8")) as Record<
-              string,
-              unknown
-            >) || {};
-          rawData = { ...commonData };
-        }
-        if (fs.existsSync(file.filePath)) {
-          const localeData =
-            (safeYamlLoad(fs.readFileSync(file.filePath, "utf-8")) as Record<
-              string,
-              unknown
-            >) || {};
-          rawData = { ...rawData, ...localeData };
-        }
-      } catch {}
+      const rawData: Record<string, unknown> = pageRawData;
 
       const schemaValidation: {
         valid: boolean;
@@ -1843,24 +1894,16 @@ export function registerValidationRoutes(app: Express): void {
         }
       });
 
-      const counterpartFile = context.contentFiles.find(
-        (f: any) =>
-          f.slug === file.slug &&
-          f.type === file.type &&
-          f.locale !== file.locale &&
-          !f.variant,
-      );
-      const counterpartUrl = counterpartFile
-        ? getCanonicalUrl(counterpartFile)
-        : null;
+      const localeUrls = ciPage.getLocaleUrls(file.slug, file.type);
+      const counterpartUrl =
+        Object.entries(localeUrls).find(([loc]) => loc !== file.locale)?.[1] ?? null;
 
       const incomingRedirects: string[] = [];
-      if (!file.variant && context.redirectMap && context.redirectMap.size > 0) {
-        context.redirectMap.forEach((entry: any, from: string) => {
-          if (entry.to === url) {
-            incomingRedirects.push(from);
-          }
-        });
+      if (!file.variant) {
+        for (const entry of ciPage.getRedirects()) {
+          const to = typeof entry.to === "string" ? entry.to : Object.values(entry.to)[0];
+          if (to === url) incomingRedirects.push(entry.from);
+        }
       }
 
       const emptyFields: string[] = [];
@@ -1993,7 +2036,7 @@ export function registerValidationRoutes(app: Express): void {
           locale: file.locale,
           availableLocales: [
             file.locale,
-            ...(counterpartFile ? [counterpartFile.locale] : []),
+            ...Object.keys(localeUrls).filter((loc) => loc !== file.locale),
           ],
           counterpartUrl,
         },

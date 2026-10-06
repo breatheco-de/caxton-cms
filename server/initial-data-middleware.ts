@@ -25,7 +25,7 @@ import { typeUsesSharedTemplate } from "./layout-owner";
 import { resolveAllTemplateVars, buildContentDeliveryParamBag } from "./resolve-template-vars";
 import { buildSingleEntryFromContent } from "./build-single-entry";
 import { hydrateEntryForDelivery } from "./hydrate-entry-delivery";
-import { databaseManager, type DatabaseManager, getCachedDatabaseEntryCount } from "./database";
+import { databaseManager, type DatabaseManager } from "./database";
 import { applyEntryModulePreload } from "./utils/html-transforms";
 import { buildInitialDataScriptTag, insertBefore, replaceLiteral } from "./utils/html-inject";
 import { applyEntryPreviewOgImage } from "./entry-preview-manager";
@@ -840,7 +840,7 @@ export async function resolveInitialData(
     }
   }
 
-  const contentTypesPayload = buildContentTypesPayload(ci, dbm);
+  const contentTypesPayload = buildContentTypesPayload(ci);
   queries.push({
     queryKey: ["/api/content-types"],
     data: contentTypesPayload,
@@ -890,7 +890,6 @@ export async function resolveInitialData(
 
 function buildContentTypesPayload(
   ci: ContentIndex = contentIndex,
-  dbm: DatabaseManager = databaseManager,
 ): Record<string, unknown>[] {
   const configs = getAllConfigs(ci.contentRoot);
   const result: Record<string, unknown>[] = [];
@@ -915,9 +914,6 @@ function buildContentTypesPayload(
       url_pattern: config.url_pattern,
       locale_key: config.field_mapping?._locale || null,
       static_entry_count: ci.findByType(type).length,
-      database_entry_count: config.database?.slug
-        ? getCachedDatabaseEntryCount(dbm, config.database.slug)
-        : null,
       layout: getLayout(type, ci.contentRoot),
     });
   }

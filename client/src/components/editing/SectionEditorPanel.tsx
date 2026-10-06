@@ -145,7 +145,7 @@ import {
   joinFormSettingsPath,
   normalizeFormSettingsPath,
 } from "@shared/joinFormSettingsPath";
-import { collectExtraConsentYamlFields, consentCardChannels, consentKeyFromYamlField, parseConsentSettingsResponse } from "@shared/consent-settings";
+import { collectExtraConsentYamlFields, consentCardChannels, parseConsentSettingsResponse } from "@shared/consent-settings";
 import { resolveBoundCtaPaths } from "@shared/validateCtaTracking";
 import { showEcommerceEditorTab } from "@shared/wipeOnDuplicate";
 
@@ -8754,7 +8754,7 @@ export function SectionEditorPanel({
                           ? (rawConsent as Record<string, unknown>)
                           : undefined,
                         convEvent?.consent,
-                      ).filter((f) => consentKeyFromYamlField(f) !== consentFallback),
+                      ),
                     ]),
                   ];
 

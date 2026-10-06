@@ -739,6 +739,26 @@ export default function MediaGallery() {
         apiRequest("POST", "/api/validation/run", {
           validators: IMAGE_HEALTH_VALIDATORS,
           includeArtifacts: true,
+        }).then(async (validationRes) => {
+          const started = await validationRes.json();
+          if (
+            typeof started.job_id === "string" &&
+            (started.status === "queued" || started.status === "running")
+          ) {
+            const { pollDiagnosticsJob } = await import("@/lib/pollDiagnosticsJob");
+            const done = await pollDiagnosticsJob(started.job_id);
+            return new Response(JSON.stringify({
+              summary: {
+                total: Array.isArray(done.validators) ? done.validators.length : 0,
+                passed: 0,
+                failed: done.summary?.errorCount ?? 0,
+                warnings: done.summary?.warningCount ?? 0,
+                duration: 0,
+              },
+              validators: done.validators ?? [],
+            }));
+          }
+          return new Response(JSON.stringify(started));
         }),
       ]);
       const scanData: ScanResult = await scanRes.json();
@@ -757,7 +777,25 @@ export default function MediaGallery() {
       validators: IMAGE_HEALTH_VALIDATORS,
       includeArtifacts: true,
     });
-    const validationData: ValidationRunResult = await validationRes.json();
+    const started = await validationRes.json();
+    let validationData: ValidationRunResult = started;
+    if (
+      typeof started.job_id === "string" &&
+      (started.status === "queued" || started.status === "running")
+    ) {
+      const { pollDiagnosticsJob } = await import("@/lib/pollDiagnosticsJob");
+      const done = await pollDiagnosticsJob(started.job_id);
+      validationData = {
+        summary: {
+          total: Array.isArray(done.validators) ? done.validators.length : 0,
+          passed: 0,
+          failed: done.summary?.errorCount ?? 0,
+          warnings: done.summary?.warningCount ?? 0,
+          duration: 0,
+        },
+        validators: (done.validators ?? []) as ValidationRunResult["validators"],
+      };
+    }
     setValidationResult(validationData);
   };
 
