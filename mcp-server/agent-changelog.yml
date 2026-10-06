@@ -5,6 +5,17 @@
 window_days: 6
 
 entries:
+  - date: "2026-10-06"
+    summary: "update_issue complete waits up to 25 seconds, then archives in that call"
+    agent_impact:
+      - "update_issue action complete still starts a diagnostics job and does not block the web process. The update call waits up to 25 seconds. If the check finishes, that same call archives (auto_completed_ids) or refuses with complete_rejected_still_open."
+      - "If the check is still running, the response is queued or running with job_id, retry_after_seconds, and next_actions to get_diagnostics_job. When that job is completed, call update_issue complete again with job_id. That second call archives or refuses. Claim, release, and uncomplete are unchanged."
+      - "DUPLICATE_TITLE and DUPLICATE_DESCRIPTION still use the site-wide child. If that child is already running, complete returns busy immediately and the issue stays open."
+    tools_changed: true
+    paths:
+      - mcp-server/tools/pages.ts
+      - server/routes/validation.ts
+      - server/services/verifiedCompleteIssue.ts
   - date: "2026-10-05"
     summary: "update_issue complete returns a diagnostics job instead of archiving in one call"
     agent_impact:

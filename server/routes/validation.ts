@@ -4,7 +4,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { ValidationService } from "../../scripts/validation/service";
 import { getCanonicalUrl } from "../../scripts/validation/shared/canonicalUrls";
-import type { ContentFile } from "../../scripts/validation/shared/types";
+import type { ContentFile, ValidationIssueActor } from "../../scripts/validation/shared/types";
+import type { ContentIndex } from "../content-index";
 import {
   getValidationCacheService,
   claimToApiRow,
@@ -17,7 +18,11 @@ import {
 } from "../services/validationCacheMerge";
 import { buildUrlCoveragePage } from "../services/validationCoverage";
 import { applyValidationRunToCache } from "../services/validationCachePostProcess";
-import { verifiedCompleteIssue } from "../services/verifiedCompleteIssue";
+import {
+  captureCompleteSnapshot,
+  settleAppliedCompleteIssue,
+  verifiedCompleteIssue,
+} from "../services/verifiedCompleteIssue";
 import {
   DIAGNOSTICS_SKIP_FOR_PER_PAGE,
   getDiagnosticsJob,
@@ -111,6 +116,114 @@ function getValidationCache(res: Response) {
 
 function getResolvedIssuesArchive(res: Response) {
   return (res.locals.site as SiteContext | undefined)?.resolvedIssuesArchive ?? null;
+}
+
+const COMPLETE_WAIT_MS = 25_000;
+
+async function waitForDiagnosticsJob(contentRoot: string, jobId: string, deadline: number) {
+  let last = getDiagnosticsJob(contentRoot, jobId);
+  while (Date.now() < deadline && (last.status === "queued" || last.status === "running")) {
+    const waitMs = Math.min(5000, Math.max(1000, (last.retry_after_seconds ?? 2) * 1000));
+    if (Date.now() + waitMs > deadline) break;
+    await new Promise((r) => setTimeout(r, waitMs));
+    last = getDiagnosticsJob(contentRoot, jobId);
+  }
+  return last;
+}
+
+async function verdictForCompletedCompleteJob(args: {
+  job: DiagnosticsJobRecord;
+  cache: ReturnType<typeof getValidationCacheService>;
+  archive: ReturnType<typeof getResolvedIssuesArchive>;
+  ci: ContentIndex;
+  contentRoot: string;
+  issueId: string;
+  author: string;
+  actor?: ValidationIssueActor;
+  report?: string;
+  agent_session_id?: string;
+  site: string;
+}) {
+  const { job } = args;
+  if (job.completeVerdict) return job.completeVerdict;
+  if (!job.completeSettle) {
+    const snap = job.completeSnapshot;
+    const issueId = job.purpose?.issueId ?? args.issueId;
+    if (snap) {
+      job.completeSettle = settleAppliedCompleteIssue({
+        cache: args.cache,
+        archive: args.archive,
+        issueId,
+        author: args.author,
+        actor: args.actor,
+        report: args.report,
+        agent_session_id: args.agent_session_id,
+        site: args.site,
+        issueBefore: snap.issueBefore,
+        openBefore: snap.openBefore,
+      });
+    } else {
+      const issueBefore = args.cache.getIssueById(issueId);
+      job.completeSettle = verifiedCompleteIssue({
+        skipRevalidation: true,
+        cache: args.cache,
+        archive: args.archive,
+        ci: args.ci,
+        contentRoot: args.contentRoot,
+        issueId,
+        author: args.author,
+        actor: args.actor,
+        report: args.report,
+        agent_session_id: args.agent_session_id,
+      }).then((verified) => {
+        if (verified.ok && issueBefore && resolveSiteForIssue(issueBefore, args.site)) {
+          emitValidationIssueWorkflowEvent({
+            type: "validation_issue_completed",
+            site: resolveSiteForIssue(issueBefore, args.site)!,
+            issue: issueBefore,
+            author: args.author,
+            actor: args.actor,
+            report: args.report,
+            agent_session_id: args.agent_session_id,
+          });
+        }
+        return verified;
+      });
+    }
+  }
+  job.completeVerdict = await job.completeSettle;
+  return job.completeVerdict;
+}
+
+function sendCompleteVerdict(
+  res: Response,
+  issueId: string,
+  verdict: Awaited<ReturnType<typeof verifiedCompleteIssue>>,
+) {
+  if (!verdict.ok) {
+    return res.status(verdict.status).json({
+      error: verdict.error,
+      code: verdict.code,
+      attempt: verdict.attempt ?? null,
+      issue: verdict.issue
+        ? {
+            id: verdict.issue.id,
+            code: verdict.issue.code,
+            message: verdict.issue.message,
+            severity: verdict.issue.severity,
+          }
+        : undefined,
+    });
+  }
+  return res.json({
+    success: true,
+    issueId,
+    action: "complete",
+    completed: verdict.completed,
+    claimed: null,
+    attempt: null,
+    auto_completed_ids: verdict.auto_completed_ids,
+  });
 }
 
 /** Locale YAML sections win over _common when both define sections. */
@@ -1179,7 +1292,49 @@ export function registerValidationRoutes(app: Express): void {
             ...(entry ?? {}),
           },
         });
-        return res.status(diagnosticsHttpStatus(started)).json(started);
+        if (started.status !== "queued" && started.status !== "running") {
+          return res.status(diagnosticsHttpStatus(started)).json(started);
+        }
+        const live = getDiagnosticsJob(contentRoot, started.job_id);
+        if (live.job) live.job.completeSnapshot = captureCompleteSnapshot(cache, issueId);
+        const waited = await waitForDiagnosticsJob(
+          contentRoot,
+          started.job_id,
+          Date.now() + COMPLETE_WAIT_MS,
+        );
+        if (waited.status !== "completed" || !waited.job) {
+          if (waited.status === "failed" || waited.status === "not_found") {
+            const http = waited.status === "not_found" ? 404 : 409;
+            return res.status(http).json({
+              status: waited.status,
+              job_id: started.job_id,
+              code: waited.code ?? waited.job?.code,
+              message: waited.message ?? waited.job?.error,
+              error: waited.job?.error,
+            });
+          }
+          return res.status(200).json({
+            status: waited.status === "running" ? "running" : "queued",
+            job_id: started.job_id,
+            retry_after_seconds: waited.retry_after_seconds ?? 5,
+            message:
+              "The check is still running. Poll the job, then complete again with job_id.",
+          });
+        }
+        const verdict = await verdictForCompletedCompleteJob({
+          job: waited.job,
+          cache,
+          archive: getResolvedIssuesArchive(res),
+          ci: getCI(res),
+          contentRoot,
+          issueId,
+          author,
+          actor,
+          report,
+          agent_session_id,
+          site: siteName,
+        });
+        return sendCompleteVerdict(res, issueId, verdict);
       }
 
       const looked = getDiagnosticsJob(contentRoot, requestedJobId);
@@ -1204,57 +1359,20 @@ export function registerValidationRoutes(app: Express): void {
         });
       }
 
-      const issueBefore = cache.getIssueById(issueId);
-      const verified = await verifiedCompleteIssue({
-        skipRevalidation: true,
+      const verdict = await verdictForCompletedCompleteJob({
+        job: looked.job,
         cache,
         archive: getResolvedIssuesArchive(res),
         ci: getCI(res),
-        contentRoot: getContentRoot(res),
+        contentRoot,
         issueId,
         author,
         actor,
         report,
         agent_session_id,
+        site: siteName,
       });
-      if (!verified.ok) {
-        return res.status(verified.status).json({
-          error: verified.error,
-          code: verified.code,
-          attempt: verified.attempt ?? null,
-          issue: verified.issue
-            ? {
-                id: verified.issue.id,
-                code: verified.issue.code,
-                message: verified.issue.message,
-                severity: verified.issue.severity,
-              }
-            : undefined,
-        });
-      }
-      const site =
-        (res.locals.site as { contentRootName?: string } | undefined)?.contentRootName ??
-        cache.getSiteFolder();
-      if (issueBefore && resolveSiteForIssue(issueBefore, site)) {
-        emitValidationIssueWorkflowEvent({
-          type: "validation_issue_completed",
-          site: resolveSiteForIssue(issueBefore, site)!,
-          issue: issueBefore,
-          author,
-          actor,
-          report,
-          agent_session_id,
-        });
-      }
-      return res.json({
-        success: true,
-        issueId,
-        action: "complete",
-        completed: verified.completed,
-        claimed: null,
-        attempt: null,
-        auto_completed_ids: verified.auto_completed_ids,
-      });
+      return sendCompleteVerdict(res, issueId, verdict);
     }
 
     const result = await cache.updateIssue(issueId, action, author, {
