@@ -217,9 +217,26 @@ function withInboundQuery(target: string, req: Request): string {
   return mergeQueryIntoTarget(target, req.originalUrl);
 }
 
+/**
+ * True when following `target` would request the same path again (a guaranteed browser loop).
+ * Case or trailing-slash differences are not loops: the next hop matches exactly and stops here.
+ */
+export function isSelfRedirectTarget(requestPath: string, host: string | undefined, target: string): boolean {
+  const base = `http://${host || "localhost"}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(target, base);
+  } catch {
+    return false;
+  }
+  if (parsed.host !== new URL(base).host) return false;
+  return parsed.pathname === requestPath;
+}
+
 function sendRedirect(
   req: Request,
   res: Response,
+  next: NextFunction,
   opts: {
     from: string;
     to: string;
@@ -230,6 +247,11 @@ function sendRedirect(
     logLabel?: string;
   },
 ): void {
+  if (isSelfRedirectTarget(req.path, req.headers.host, opts.to)) {
+    log.warn(`[Redirects] Skipped self-redirect${opts.logLabel ? ` ${opts.logLabel}` : ""}: ${opts.from} -> ${opts.to} (source: ${opts.source ?? "unknown"})`);
+    next();
+    return;
+  }
   applyRedirectTraceCookie(req, res, {
     from: opts.from,
     to: opts.to,
@@ -259,7 +281,7 @@ export function redirectMiddleware(req: Request, res: Response, next: NextFuncti
     ((res.locals.site as any)?.contentRoot as string | undefined) || ci.contentRoot;
   const homeAliasTarget = resolveLocaleHomeAliasTarget(req.path, ci, contentRoot);
   if (homeAliasTarget) {
-    sendRedirect(req, res, {
+    sendRedirect(req, res, next, {
       from: req.path,
       to: withInboundQuery(homeAliasTarget, req),
       status: 301,
@@ -279,7 +301,7 @@ export function redirectMiddleware(req: Request, res: Response, next: NextFuncti
   if (entry) {
     const status = entry.status || 301;
     const target = withInboundQuery(resolveRedirectTarget(entry, req), req);
-    sendRedirect(req, res, {
+    sendRedirect(req, res, next, {
       from: req.path,
       to: target,
       status,
@@ -296,7 +318,7 @@ export function redirectMiddleware(req: Request, res: Response, next: NextFuncti
       const captureGroups = match.slice(1);
       const status = regexEntry.status || 301;
       const target = withInboundQuery(resolveRedirectTarget(regexEntry, req, captureGroups), req);
-      sendRedirect(req, res, {
+      sendRedirect(req, res, next, {
         from: req.path,
         to: target,
         status,
@@ -342,7 +364,7 @@ export function fallbackRedirectMiddleware(req: Request, res: Response, next: Ne
     if (entry) {
       const status = entry.status || 301;
       const target = withInboundQuery(resolveRedirectTarget(entry, req), req);
-      sendRedirect(req, res, {
+      sendRedirect(req, res, next, {
         from: req.path,
         to: target,
         status,
@@ -362,7 +384,7 @@ export function fallbackRedirectMiddleware(req: Request, res: Response, next: Ne
         const captureGroups = match.slice(1);
         const status = regexEntry.status || 301;
         const target = withInboundQuery(resolveRedirectTarget(regexEntry, req, captureGroups), req);
-        sendRedirect(req, res, {
+        sendRedirect(req, res, next, {
           from: req.path,
           to: target,
           status,
@@ -393,7 +415,7 @@ export function fallbackRedirectMiddleware(req: Request, res: Response, next: Ne
     const soft = findCanonicalSoftMatch(cleanUrlNoSlash, activeCi);
     if (soft) {
       const target = withInboundQuery(soft.canonicalUrl, req);
-      sendRedirect(req, res, {
+      sendRedirect(req, res, next, {
         from: cleanUrl,
         to: target,
         status: 301,
@@ -419,7 +441,7 @@ export function fallbackRedirectMiddleware(req: Request, res: Response, next: Ne
     if (entry) {
       const status = entry.status || 301;
       const target = withInboundQuery(resolveRedirectTarget(entry, req), req);
-      sendRedirect(req, res, {
+      sendRedirect(req, res, next, {
         from: req.path,
         to: target,
         status,
@@ -439,7 +461,7 @@ export function fallbackRedirectMiddleware(req: Request, res: Response, next: Ne
         const captureGroups = match.slice(1);
         const status = regexEntry.status || 301;
         const target = withInboundQuery(resolveRedirectTarget(regexEntry, req, captureGroups), req);
-        sendRedirect(req, res, {
+        sendRedirect(req, res, next, {
           from: req.path,
           to: target,
           status,
