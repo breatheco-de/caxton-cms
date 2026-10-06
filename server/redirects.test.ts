@@ -23,7 +23,7 @@ vi.mock("./content-types", async (importOriginal) => {
   };
 });
 
-import { findCanonicalSoftMatch, inspectRedirect, isLivePublicUrl, isSelfRedirectTarget, mergeQueryIntoTarget, resolveRedirectRequestLocale, testRedirect } from "./redirects";
+import { fallbackRedirectMiddleware, findCanonicalSoftMatch, inspectRedirect, isLivePublicUrl, isSelfRedirectTarget, mergeQueryIntoTarget, resolveRedirectRequestLocale, testRedirect } from "./redirects";
 import { canonicalizePillarPath } from "./seo-fields";
 import { applyRedirectTraceCookie } from "./redirect-trace-cookie";
 import {
@@ -37,9 +37,12 @@ import type { contentIndex as ContentIndexType, RedirectEntry } from "./content-
 
 function makeCi(opts: {
   knownSlugs?: Record<string, { es?: string; en?: string }>;
+  /** Live non-blog URLs (not soft-matchable). */
+  knownUrls?: string[];
   redirects?: RedirectEntry[];
 }): typeof ContentIndexType {
   const knownSlugs = opts.knownSlugs ?? {};
+  const knownUrls = opts.knownUrls ?? [];
   const redirects = opts.redirects ?? [];
   return {
     findBySlug: (slug: string, filter?: { contentType?: string }) => {
@@ -49,6 +52,7 @@ function makeCi(opts: {
     },
     getAlternateUrls: (slug: string) => knownSlugs[slug] ?? {},
     isKnownUrl: (url: string) =>
+      knownUrls.includes(url) ||
       Object.values(knownSlugs).some((urls) => Object.values(urls).includes(url)),
     getRedirects: () => redirects,
     refreshCustomRedirects: () => redirects,
@@ -314,6 +318,88 @@ describe("regex capture groups lowercase for relative destinations", () => {
       "/es/blog/cuanto-gana-un-programador/cuanto-gana-un-programador-en-colombia",
     );
     expect(result.destinationExists).toBe(true);
+  });
+});
+
+describe("guarded custom regex fallbacks", () => {
+  const custom = (from: string, to: string, priority: "before" | "fallback" = "fallback"): RedirectEntry => ({
+    from,
+    to,
+    type: "custom",
+    source: "site_4geeks-com/custom-redirects.yml",
+    status: 301,
+    priority,
+  });
+
+  const rules: RedirectEntry[] = [
+    custom("/us/landing/([a-z\\-_\\d]+)", "/landing/$1"),
+    custom("/us/coding-bootcamps/(.*)", "/en/career-programs/$1"),
+    custom("/us/([a-z\\-_]+)/([a-z\\-_\\d]+)", "/en/blog/$1/$2"),
+    custom("/us/(.*)", "/en/$1"),
+    custom("/en/signup", "https://learn.4geeks.com/login", "before"),
+    custom(
+      "/es/(?!blog/|how-to/|career-programs/|programas-de-carrera/|program-comparison|ubicacion/|location/|landing/)([a-z_-]+)/([a-z0-9_-]+)",
+      "/es/blog/$1/$2",
+    ),
+    custom("/loop/([a-z]+)", "/en/a-$1"),
+    custom("/en/a-x", "/en/b-x", "before"),
+    custom("/en/b-x", "/en/a-x", "before"),
+  ];
+
+  const makeGuardCi = () =>
+    makeCi({
+      knownSlugs: {
+        "become-an-ai-engineer": { en: "/en/blog/ai-powered-learning/become-an-ai-engineer" },
+        "cuanto-gana-un-programador-en-colombia": {
+          es: "/es/blog/cuanto-gana-un-programador/cuanto-gana-un-programador-en-colombia",
+        },
+      },
+      knownUrls: ["/en/apply"],
+      redirects: rules,
+    });
+
+  function runMiddleware(ci: typeof ContentIndexType, path: string): string | null {
+    let location: string | null = null;
+    const req = { path, originalUrl: path, headers: { host: "4geeks.com" }, cookies: {}, hostname: "4geeks.com" } as any;
+    const res = {
+      locals: { site: { contentIndex: ci } },
+      cookie: () => {},
+      redirect: (_status: number, to: string) => {
+        location = to;
+      },
+    } as any;
+    fallbackRedirectMiddleware(req, res, () => {});
+    return location;
+  }
+
+  const cases: Array<[string, string | null]> = [
+    ["/us/ai-powered-learning/become-an-ai-engineer", "/en/blog/ai-powered-learning/become-an-ai-engineer"],
+    ["/us/blog/foo", null],
+    ["/us/apply", "/en/apply"],
+    ["/us/wrong-cat/become-an-ai-engineer", "/en/blog/ai-powered-learning/become-an-ai-engineer"],
+    ["/us/signup", "https://learn.4geeks.com/login"],
+    ["/us/coding-bootcamps/renamed-program", null],
+    ["/es/seccion-inexistente/x", null],
+    [
+      "/es/cuanto-gana-un-programador/cuanto-gana-un-programador-en-colombia",
+      "/es/blog/cuanto-gana-un-programador/cuanto-gana-un-programador-en-colombia",
+    ],
+    ["/loop/x", null],
+  ];
+
+  it.each(cases)("Test a URL: %s -> %s", (path, expected) => {
+    const result = testRedirect(path, path.startsWith("/es/") ? "es" : "en", makeGuardCi());
+    if (expected === null) {
+      expect(result.match).toBe(false);
+    } else {
+      expect(result.match).toBe(true);
+      expect(result.resolvedTo).toBe(expected);
+      expect(isLivePublicUrl(result)).toBe(true);
+    }
+  });
+
+  it.each(cases)("middleware matches Test a URL: %s -> %s", (path, expected) => {
+    expect(runMiddleware(makeGuardCi(), path)).toBe(expected);
   });
 });
 
