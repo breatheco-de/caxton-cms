@@ -248,10 +248,27 @@ export async function verifiedCompleteIssue(args: {
   actor?: ValidationIssueActor;
   report?: string;
   agent_session_id?: string;
+  /** Job already applied validator results. Only archive or reject. */
+  skipRevalidation?: boolean;
 }): Promise<VerifiedCompleteResult> {
   const { cache, archive, issueId, author, actor, report, agent_session_id } = args;
   const issue = cache.getIssueById(issueId);
   if (!issue) {
+    if (args.skipRevalidation) {
+      const completion = {
+        completedBy: author,
+        completedAt: new Date().toISOString(),
+        ...(actor ? { actor } : {}),
+        ...(report ? { report } : {}),
+      };
+      return {
+        ok: true,
+        action: "complete",
+        completed: completionToApiRow(completion),
+        claimed: null,
+        auto_completed_ids: [issueId],
+      };
+    }
     return { ok: false, error: `Unknown issue id: ${issueId}`, code: "unknown_issue", status: 404 };
   }
 
@@ -265,7 +282,9 @@ export async function verifiedCompleteIssue(args: {
   const openBefore = openBeforeIssues.map((i) => i.id);
   const legacyKey = Boolean(primaryEntryKey && isLegacySyntheticEntryKey(primaryEntryKey));
 
-  if (DUPLICATE_CODES.has(issue.code)) {
+  if (args.skipRevalidation) {
+    // Results were applied when the job completed. Fall through to the verdict.
+  } else if (DUPLICATE_CODES.has(issue.code)) {
     const dup = await applySeoDuplicatesRevalidation({
       contentRoot: args.contentRoot,
       ci: args.ci,

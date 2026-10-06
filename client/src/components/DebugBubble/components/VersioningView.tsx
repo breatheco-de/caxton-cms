@@ -726,21 +726,43 @@ export function VersioningView({
       const body: {
         variants: typeof variants;
         confirm_publish_variants?: boolean;
+        validation_job_id?: string;
+        validation_job_ids?: string[];
       } = { variants };
       if (opts?.confirmPublish) {
         body.confirm_publish_variants = true;
       }
 
-      const res = await fetch(
-        `/api/versioning/${contentInfo.type}/${versioningWriteSlug}/${editingLocale}`,
-        {
-          method: "PATCH",
-          headers,
-          body: JSON.stringify(body),
-        }
-      );
+      const send = () =>
+        fetch(
+          `/api/versioning/${contentInfo.type}/${versioningWriteSlug}/${editingLocale}`,
+          {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify(body),
+          },
+        );
 
-      const data = await res.json().catch(() => ({}));
+      let res = await send();
+      let data = await res.json().catch(() => ({}));
+      const jobIds: string[] = Array.isArray(data.validation_job_ids)
+        ? data.validation_job_ids
+        : data.job_id
+          ? [data.job_id]
+          : [];
+      if (
+        opts?.confirmPublish &&
+        jobIds.length > 0 &&
+        (data.status === "queued" || data.status === "running")
+      ) {
+        const { pollDiagnosticsJob } = await import("@/lib/pollDiagnosticsJob");
+        for (const id of jobIds) {
+          await pollDiagnosticsJob(id);
+        }
+        body.validation_job_ids = jobIds;
+        res = await send();
+        data = await res.json().catch(() => ({}));
+      }
 
       if (!res.ok) {
         if (
@@ -1868,8 +1890,9 @@ export function VersioningView({
             <DialogTitle>Publish variants with traffic?</DialogTitle>
             <DialogDescription className="space-y-2">
               <span className="block">
-                Assigning traffic publishes these variants and runs validation. Redirects
-                cannot live on variants — only on the live locale file.
+                This checks the version before anyone can see it. A full-site diagnostics
+                run does not block this button. Redirects cannot live on variants — only
+                on the live locale file.
               </span>
               <ul className="list-disc pl-4 text-sm">
                 {(publishConfirmVariants ?? []).map((slug) => (
@@ -1881,12 +1904,11 @@ export function VersioningView({
               <details className="text-xs text-muted-foreground pt-1">
                 <summary className="cursor-pointer">Read more (advanced)</summary>
                 <p className="mt-1">
+                  The check runs in the background and this dialog stays on Validating
+                  until it finishes. Job id is returned on the save request
+                  (<code className="bg-muted px-1 rounded">validation_job_id</code>).
                   Published variants use entry key{" "}
                   <code className="bg-muted px-1 rounded">type/slug/locale@variant</code>.
-                  Files:{" "}
-                  <code className="bg-muted px-1 rounded">scripts/validation/shared/entryKey.ts</code>
-                  ,{" "}
-                  <code className="bg-muted px-1 rounded">server/routes/versioning.ts</code>.
                 </p>
               </details>
             </DialogDescription>

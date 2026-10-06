@@ -1526,6 +1526,9 @@ export const versioningUpdateSchema = z.object({
   variants: z.array(versioningVariantSchema).min(1),
   /** Required when any variant transitions from 0% → >0% traffic (publishes). */
   confirm_publish_variants: z.boolean().optional(),
+  /** Completed traffic-check job. The save applies its result only when it matches this variant. */
+  validation_job_id: z.string().optional(),
+  validation_job_ids: z.array(z.string()).optional(),
 }).strict();
 
 export type VersioningUpdate = z.infer<typeof versioningUpdateSchema>;
