@@ -28,7 +28,7 @@ import { createServer as createViteServer, createLogger, type ViteDevServer } fr
 import { isWeblifyDebug } from "../shared/debug";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
-import { resolveInitialData, resolvePreloadHints, injectSsrMetaTags, type PreloadHint, type InitialDataPayload } from "./initial-data-middleware";
+import { resolveInitialData, type InitialDataPayload } from "./initial-data-middleware";
 import { injectSsrSchemaHtml } from "./ssr-schema";
 import {
   resolvePublicHtmlStatus,
@@ -36,7 +36,7 @@ import {
 } from "./public-html-status";
 import { applyEntryModulePreload } from "./utils/html-transforms";
 import { getEntryAssets, buildEntryPreloadTags, buildEntryLinkHeader } from "./utils/vite-manifest";
-import { isMeaningfulSsrAppHtml } from "./utils/ssr-html";
+import { assembleSsrDocument, isMeaningfulSsrAppHtml } from "./utils/ssr-html";
 import {
   buildHtmlCacheKey,
   setCachedHtml,
@@ -95,32 +95,6 @@ async function getInitialDataForRequest(
   ).catch(() => null);
   locals.initialDataPromise = promise;
   return promise;
-}
-
-function buildPreloadTags(hints: PreloadHint[]): string {
-  if (hints.length === 0) return "";
-  // Only the first (true LCP) candidate gets fetchpriority=high; siblings stay
-  // as plain preloads so they don't contend for bandwidth with the hero.
-  return hints
-    .map((hint, index) => {
-      const href = `href="${hint.src.replace(/"/g, "&quot;")}"`;
-      const priority =
-        index === 0 || hint.highPriority
-          ? ` fetchpriority="high"`
-          : "";
-      if (hint.srcset) {
-        const imagesrcset = `imagesrcset="${hint.srcset.replace(/"/g, "&quot;")}"`;
-        const imagesizes = `imagesizes="${(hint.sizes ?? "100vw").replace(/"/g, "&quot;")}"`;
-        return `<link rel="preload" as="image"${priority} ${href} ${imagesrcset} ${imagesizes}>`;
-      }
-      return `<link rel="preload" as="image"${priority} ${href}>`;
-    })
-    .join("\n");
-}
-
-function injectPreloadTags(html: string, preloadTags: string): string {
-  if (!preloadTags) return html;
-  return html.replace("</head>", preloadTags + "\n</head>");
 }
 
 const viteLogger = createLogger();
@@ -306,29 +280,14 @@ export async function setupVite(app: Express, server: Server): Promise<ViteDevSe
         );
       }
 
-      let html = injected
-        ? page.replace('<div id="root"></div>', `<div id="root">${appHtml}</div>`)
-        : page;
-
-      const preloadUrls = resolvePreloadHints(initialDataPayload);
-      const preloadTags = buildPreloadTags(preloadUrls);
-      html = injectPreloadTags(html, preloadTags);
-      html = injectSsrMetaTags(
-        html,
-        initialDataPayload,
-        (res.locals as any).site?.contentRoot,
+      let html = assembleSsrDocument({
+        template: page,
+        appHtml: injected ? appHtml : null,
+        payload: initialDataPayload,
+        contentRoot: (res.locals as any).site?.contentRoot,
         url,
-      );
-
-      const ssrSchemaHtml = (req as any).ssrSchemaHtml as string | undefined;
-      if (ssrSchemaHtml) {
-        html = injectSsrSchemaHtml(html, ssrSchemaHtml);
-      }
-
-      if (initialDataPayload) {
-        const scriptTag = `<script id="__INITIAL_DATA__" type="application/json">${JSON.stringify(initialDataPayload).replace(/</g, "\\u003c")}</script>`;
-        html = html.replace("</body>", scriptTag + "</body>");
-      }
+        ssrSchemaHtml: (req as any).ssrSchemaHtml as string | undefined,
+      });
 
       html = injectGtmWebContainerId(html, (res.locals as any).site?.contentRoot);
 
@@ -404,10 +363,10 @@ export function serveStatic(app: Express) {
       if (/<link[^>]+rel=["']stylesheet["']/i.test(html)) {
         html = html.replace(
           /(<link[^>]+rel=["']stylesheet["'][^>]*>)/i,
-          `$1\n${entryPreloadTags}`,
+          (_m, tag: string) => tag + "\n" + entryPreloadTags,
         );
       } else {
-        html = html.replace(/(<head[^>]*>)/i, `$1\n${entryPreloadTags}`);
+        html = html.replace(/(<head[^>]*>)/i, (_m, tag: string) => tag + "\n" + entryPreloadTags);
       }
     }
     return html;
@@ -518,29 +477,14 @@ export function serveStatic(app: Express) {
               throw new Error("empty_ssr_app_html");
             }
 
-            let html = indexHtml.replace(
-              '<div id="root"></div>',
-              `<div id="root">${appHtml}</div>`,
-            );
-
-            const preloadUrls = resolvePreloadHints(initialDataPayload);
-            const preloadTags = buildPreloadTags(preloadUrls);
-            html = injectPreloadTags(html, preloadTags);
-            html = injectSsrMetaTags(
-              html,
-              initialDataPayload,
-              (res.locals as any).site?.contentRoot,
+            let html = assembleSsrDocument({
+              template: indexHtml,
+              appHtml,
+              payload: initialDataPayload,
+              contentRoot: (res.locals as any).site?.contentRoot,
               url,
-            );
-
-            if (ssrSchemaHtml) {
-              html = injectSsrSchemaHtml(html, ssrSchemaHtml);
-            }
-
-            if (initialDataPayload) {
-              const scriptTag = `<script id="__INITIAL_DATA__" type="application/json">${JSON.stringify(initialDataPayload).replace(/</g, "\\u003c")}</script>`;
-              html = html.replace("</body>", scriptTag + "</body>");
-            }
+              ssrSchemaHtml,
+            });
 
             html = applyEntryModulePreload(html);
             html = applyEntryPreloads(html, res);

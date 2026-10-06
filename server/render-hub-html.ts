@@ -1,15 +1,10 @@
 import fs from "fs";
 import path from "path";
 import type { ViteDevServer } from "vite";
-import {
-  resolveInitialData,
-  resolvePreloadHints,
-  injectSsrMetaTags,
-  type PreloadHint,
-} from "./initial-data-middleware";
+import { resolveInitialData } from "./initial-data-middleware";
 import { resolvePublicHtmlStatus } from "./public-html-status";
 import { applyEntryModulePreload } from "./utils/html-transforms";
-import { isMeaningfulSsrAppHtml } from "./utils/ssr-html";
+import { assembleSsrDocument, isMeaningfulSsrAppHtml } from "./utils/ssr-html";
 import {
   buildHtmlCacheKey,
   getCachedHtml,
@@ -26,27 +21,6 @@ let prodSsrLoaded = false;
 
 export function registerDevViteForHubRender(vite: ViteDevServer | null): void {
   devViteRef = vite;
-}
-
-function buildPreloadTags(hints: PreloadHint[]): string {
-  if (hints.length === 0) return "";
-  return hints
-    .map((hint, index) => {
-      const href = `href="${hint.src.replace(/"/g, "&quot;")}"`;
-      const priority = index === 0 || hint.highPriority ? ` fetchpriority="high"` : "";
-      if (hint.srcset) {
-        const imagesrcset = `imagesrcset="${hint.srcset.replace(/"/g, "&quot;")}"`;
-        const imagesizes = `imagesizes="${(hint.sizes ?? "100vw").replace(/"/g, "&quot;")}"`;
-        return `<link rel="preload" as="image"${priority} ${href} ${imagesrcset} ${imagesizes}>`;
-      }
-      return `<link rel="preload" as="image"${priority} ${href}>`;
-    })
-    .join("\n");
-}
-
-function injectPreloadTags(html: string, preloadTags: string): string {
-  if (!preloadTags) return html;
-  return html.replace("</head>", preloadTags + "\n</head>");
 }
 
 async function loadSsrRender(): Promise<
@@ -163,20 +137,14 @@ export async function renderHubHtml(opts: {
       return null;
     }
 
-    let html = indexHtml.replace(
-      '<div id="root"></div>',
-      `<div id="root">${appHtml}</div>`,
-    );
-
-    const preloadTags = buildPreloadTags(resolvePreloadHints(initialDataPayload));
-    html = injectPreloadTags(html, preloadTags);
-    html = injectSsrMetaTags(html, initialDataPayload, opts.site.contentRoot, url);
+    let html = assembleSsrDocument({
+      template: indexHtml,
+      appHtml,
+      payload: initialDataPayload,
+      contentRoot: opts.site.contentRoot,
+      url,
+    });
     html = applyEntryModulePreload(html);
-
-    if (initialDataPayload) {
-      const scriptTag = `<script id="__INITIAL_DATA__" type="application/json">${JSON.stringify(initialDataPayload).replace(/</g, "\\u003c")}</script>`;
-      html = html.replace("</body>", scriptTag + "\n</body>");
-    }
 
     if (opts.writeCache !== false) {
       setCachedHtml(cacheKey, html, status);

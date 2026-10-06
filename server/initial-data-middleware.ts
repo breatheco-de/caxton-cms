@@ -27,6 +27,7 @@ import { buildSingleEntryFromContent } from "./build-single-entry";
 import { hydrateEntryForDelivery } from "./hydrate-entry-delivery";
 import { databaseManager, type DatabaseManager } from "./database";
 import { applyEntryModulePreload } from "./utils/html-transforms";
+import { buildInitialDataScriptTag, insertBefore, replaceLiteral } from "./utils/html-inject";
 import { applyEntryPreviewOgImage } from "./entry-preview-manager";
 import {
   buildLocaleUnavailablePayload,
@@ -544,8 +545,12 @@ function replaceMetaContent(html: string, attr: string, attrValue: string, repla
   const escaped = escapeAttr(replacement);
   const pattern = new RegExp(`(<meta[^>]*${attr.replace(":", "\\:")}="${attrValue}"[^>]*content=")[^"]*(")`);
   const patternRev = new RegExp(`(<meta[^>]*content=")[^"]*("[^>]*${attr.replace(":", "\\:")}="${attrValue}")`);
-  if (pattern.test(html)) return html.replace(pattern, `$1${escaped}$2`);
-  if (patternRev.test(html)) return html.replace(patternRev, `$1${escaped}$2`);
+  if (pattern.test(html)) {
+    return html.replace(pattern, (_m, open: string, close: string) => open + escaped + close);
+  }
+  if (patternRev.test(html)) {
+    return html.replace(patternRev, (_m, open: string, close: string) => open + escaped + close);
+  }
   return html;
 }
 
@@ -558,7 +563,10 @@ export function injectSsrMetaTags(
   if (!payload) return html;
 
   const lang = payload.locale || "en";
-  html = html.replace(/(<html\s[^>]*lang=")[^"]*(")/i, `$1${lang}$2`);
+  html = html.replace(
+    /(<html\s[^>]*lang=")[^"]*(")/i,
+    (_m, open: string, close: string) => open + escapeAttr(lang) + close,
+  );
   html = replaceMetaContent(html, "property", "og:locale", toOgLocale(lang));
 
   const knownPageApiPaths = new Set(
@@ -582,7 +590,7 @@ export function injectSsrMetaTags(
     if (html.includes('name="robots"')) {
       html = replaceMetaContent(html, "name", "robots", "noindex");
     } else {
-      html = html.replace("</head>", `<meta name="robots" content="noindex" />\n</head>`);
+      html = insertBefore(html, "</head>", `<meta name="robots" content="noindex" />\n`);
     }
     return html;
   }
@@ -608,7 +616,7 @@ export function injectSsrMetaTags(
   }) as Record<string, unknown>;
 
   if (typeof meta.page_title === "string" && !meta.page_title.includes("{{")) {
-    html = html.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeAttr(meta.page_title)}</title>`);
+    html = replaceLiteral(html, /<title>[\s\S]*?<\/title>/, `<title>${escapeAttr(meta.page_title)}</title>`);
     html = replaceMetaContent(html, "property", "og:title", meta.page_title);
     html = replaceMetaContent(html, "name", "twitter:title", meta.page_title);
   }
@@ -624,12 +632,12 @@ export function injectSsrMetaTags(
     if (html.includes('property="og:image"')) {
       html = replaceMetaContent(html, "property", "og:image", meta.og_image);
     } else {
-      html = html.replace("</head>", `<meta property="og:image" content="${escaped}" />\n</head>`);
+      html = insertBefore(html, "</head>", `<meta property="og:image" content="${escaped}" />\n`);
     }
     if (html.includes('name="twitter:image"')) {
       html = replaceMetaContent(html, "name", "twitter:image", meta.og_image);
     } else {
-      html = html.replace("</head>", `<meta name="twitter:image" content="${escaped}" />\n</head>`);
+      html = insertBefore(html, "</head>", `<meta name="twitter:image" content="${escaped}" />\n`);
     }
   }
 
@@ -640,7 +648,7 @@ export function injectSsrMetaTags(
   if (html.includes('name="robots"')) {
     html = replaceMetaContent(html, "name", "robots", robotsValue);
   } else {
-    html = html.replace("</head>", `<meta name="robots" content="${escapeAttr(robotsValue)}" />\n</head>`);
+    html = insertBefore(html, "</head>", `<meta name="robots" content="${escapeAttr(robotsValue)}" />\n`);
   }
 
   const contentTypeForCanonical = contentTypeFromPageQuery(pageQuery);
@@ -674,15 +682,12 @@ export function injectSsrMetaTags(
           "",
         );
       }
-      html = html.replace("</head>", `${canonicalTag}\n</head>`);
+      html = insertBefore(html, "</head>", `${canonicalTag}\n`);
 
       if (html.includes('property="og:url"')) {
         html = replaceMetaContent(html, "property", "og:url", canonicalHref);
       } else {
-        html = html.replace(
-          "</head>",
-          `<meta property="og:url" content="${escaped}" />\n</head>`,
-        );
+        html = insertBefore(html, "</head>", `<meta property="og:url" content="${escaped}" />\n`);
       }
     }
   }
@@ -1018,15 +1023,14 @@ export function initialDataMiddleware(
               const gcsHints =
                 '<link rel="preconnect" href="https://storage.googleapis.com" crossorigin />\n' +
                 '<link rel="dns-prefetch" href="https://storage.googleapis.com" />\n';
-              injected = injected.replace("</head>", gcsHints + "</head>");
+              injected = insertBefore(injected, "</head>", gcsHints);
             }
 
             if (payload) {
-              const scriptTag = `<script id="__INITIAL_DATA__" type="application/json">${JSON.stringify(payload).replace(/</g, "\\u003c")}</script>`;
-              injected = injected.replace("</body>", scriptTag + "</body>");
+              injected = insertBefore(injected, "</body>", buildInitialDataScriptTag(payload));
               const themeStyle = buildThemeCssOverrides(ci.contentRoot);
               if (themeStyle && !injected.includes('id="__theme_overrides__"')) {
-                injected = injected.replace("</head>", themeStyle + "</head>");
+                injected = insertBefore(injected, "</head>", themeStyle);
               }
             }
             injected = applyEntryModulePreload(injected);

@@ -161,15 +161,21 @@ function detectLocale(req: Request): string {
  * Substitute `$1`…`$n` in a redirect target. Relative (site) destinations lowercased
  * so case-insensitive regex matches still land on canonical lowercase content URLs.
  * Absolute http(s) destinations keep original capture casing (external IDs may be caseful).
+ * Single pass with a replacer: capture values come from the visitor's URL and are
+ * inserted literally (never re-scanned for `$2`, `$&`, …).
  */
-function applyCaptureGroups(target: string, captureGroups: string[]): string {
+export function applyCaptureGroups(target: string, captureGroups: string[]): string {
   const lowercaseCaptures = !/^https?:\/\//i.test(target);
-  let out = target;
-  for (let i = 0; i < captureGroups.length; i++) {
-    const value = lowercaseCaptures ? captureGroups[i].toLowerCase() : captureGroups[i];
-    out = out.replace(new RegExp(`\\$${i + 1}`, "g"), value);
-  }
-  return out;
+  return target.replace(/\$(\d+)/g, (match, digits: string) => {
+    // Longest group number that exists wins; trailing digits stay literal ("$12" with one group → value + "2").
+    for (let len = digits.length; len > 0; len--) {
+      const value = captureGroups[Number(digits.slice(0, len)) - 1];
+      if (value !== undefined) {
+        return (lowercaseCaptures ? value.toLowerCase() : value) + digits.slice(len);
+      }
+    }
+    return match;
+  });
 }
 
 function resolveRedirectTarget(entry: RedirectEntry, req: Request, captureGroups?: string[]): string {
