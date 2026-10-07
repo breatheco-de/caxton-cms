@@ -2285,8 +2285,9 @@ export function registerPageTools(
     "Example claim: \"SEO title empty on blog/foo/en — will set meta.page_title from H1 and re-check.\" " +
     AGENT_REPORT_ISSUE_COMPLETE_EXAMPLE + " " +
     "Example release: \"Tried updating meta.page_title; validator still fails because sitemap entry missing — need redirects change.\" " +
-    "Does NOT push YAML/GitHub. The first complete starts a diagnostics job and does not archive. " +
-    "Poll get_diagnostics_job; when it is completed, call complete again with job_id to archive or reject. " +
+    "Does NOT push YAML/GitHub. The first complete waits up to 25 seconds. " +
+    "If the check finishes, this call archives or refuses. If it is still running, poll get_diagnostics_job, " +
+    "then call complete again with job_id to archive or refuse. " +
     "A later validator cache write that rewrites the same id clears complete but keeps an active claim and prior_attempts; may emit validation_issue_reopened in admin events. " +
     "Requires content_edit_text or seo_edit. Pass issue_id only (no update-by-code). Optional model (best-effort, self-reported).",
     {
@@ -2311,7 +2312,7 @@ export function registerPageTools(
       job_id: z
         .string()
         .optional()
-        .describe("From the first complete response, after get_diagnostics_job reports completed. The second complete archives or rejects. Omit on the first call."),
+        .describe("After get_diagnostics_job reports completed, when the first complete timed out. That call archives or refuses. Omit on the first call."),
     },
     async ({ issue_id, action, site, model, report, why, highlights, agent_session_id, job_id }) => {
       const canMutate =
@@ -2403,7 +2404,7 @@ export function registerPageTools(
               code: data.code,
               message: data.status === "busy"
                 ? "Site-wide diagnostics is already running. The issue was not archived."
-                : "Check started. The issue was not archived. Poll get_diagnostics_job, then complete again with job_id.",
+                : "The check is still running after 25 seconds. The issue was not archived. Poll get_diagnostics_job, then complete again with job_id.",
             },
             {
               warnings: [
@@ -2470,7 +2471,7 @@ export function registerPageTools(
           {
             code: "complete_revalidates",
             message:
-              "The first complete returns queued or busy and does not archive. After get_diagnostics_job is completed, call complete again with job_id. That archives (auto_completed_ids) or refuses with complete_rejected_still_open. Duplicate title/description uses the site-wide child and can be busy.",
+              "A complete that finishes within 25 seconds archives or refuses in this call. If it is still running, poll get_diagnostics_job, then complete again with job_id. That second call archives or refuses. Duplicate title/description uses the site-wide child and can be busy.",
           },
           {
             code: "claim_ttl_30m",

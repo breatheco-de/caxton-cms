@@ -11,7 +11,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { fork, type ChildProcess } from "child_process";
-import type { ValidatorResult } from "../../scripts/validation/shared/types";
+import type { StoredValidationIssue, ValidatorResult } from "../../scripts/validation/shared/types";
 import {
   effectiveValidatorNames,
   issuesBySlugFromTargets,
@@ -36,6 +36,7 @@ import {
   applyDeferredDiagnosticsCache,
   enqueueCacheApply,
 } from "./applyDeferredDiagnostics";
+import type { VerifiedCompleteResult } from "./verifiedCompleteIssue";
 
 const log = child({ module: "diagnosticsJobService" });
 
@@ -140,6 +141,10 @@ export interface DiagnosticsJobRecord extends DiagnosticsJobEnvelope {
   resultIssuesBySlug?: Record<string, MappedIssue[]>;
   /** In-memory only — not written to disk envelopes */
   log?: DiagnosticsJobLogLine[];
+  /** Copy of the issue before this complete job writes the cache. Not written to disk. */
+  completeSnapshot?: { issueBefore: StoredValidationIssue | null; openBefore: StoredValidationIssue[] };
+  completeVerdict?: VerifiedCompleteResult;
+  completeSettle?: Promise<VerifiedCompleteResult>;
 }
 
 function countMapped(issuesBySlug: Record<string, MappedIssue[]>): {
@@ -689,7 +694,10 @@ async function finalizeJob(
       }
       appendJobLog(
         job,
-        `Completed — ${outcome.summary.errorCount} errors, ${outcome.summary.warningCount} warnings`,
+        job.status === "failed"
+          ? `Failed — ${job.error ?? "Scope not found"}`
+          : `Completed — ${outcome.summary.errorCount} errors, ${outcome.summary.warningCount} warnings`,
+        job.status === "failed" ? "error" : "info",
       );
     } else {
       job.status = "failed";
