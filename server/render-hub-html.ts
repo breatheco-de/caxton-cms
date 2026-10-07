@@ -7,7 +7,7 @@ import { resolvePublicHtmlStatus } from "./public-html-status";
 import { publicPageHead } from "./public-page-schema";
 import { applyEntryModulePreload } from "./utils/html-transforms";
 import { buildEntryPreloadTags, getEntryAssets } from "./utils/vite-manifest";
-import { assembleSsrDocument, isMeaningfulSsrAppHtml } from "./utils/ssr-html";
+import { assembleSsrDocument, contentTypesReadyForHtmlCache, isMeaningfulSsrAppHtml } from "./utils/ssr-html";
 import { injectGtmWebContainerId } from "./gtm-web-inject";
 import {
   buildHtmlCacheKey,
@@ -133,6 +133,10 @@ export async function buildAnonymousPageHtml(opts: {
   html = applyEntryModulePreload(html);
   html = injectEntryPreloadTags(html);
   html = injectGtmWebContainerId(html, opts.contentRoot);
+  if (!contentTypesReadyForHtmlCache(opts.initialData)) {
+    log.warn({ url: opts.url }, "content type list missing; not storing this HTML copy");
+    return { html, skipCacheWrite: true };
+  }
   return { html, ...meta };
 }
 

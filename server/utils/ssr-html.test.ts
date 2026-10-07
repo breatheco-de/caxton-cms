@@ -2,7 +2,11 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 import type { InitialDataPayload } from "../initial-data-middleware";
-import { assembleSsrDocument } from "./ssr-html";
+import {
+  assembleSsrDocument,
+  contentTypesReadyForHtmlCache,
+  isMeaningfulSsrAppHtml,
+} from "./ssr-html";
 
 const TEMPLATE = fs.readFileSync(
   path.resolve(import.meta.dirname, "..", "..", "client", "index.html"),
@@ -102,6 +106,34 @@ describe("assembleSsrDocument — `$` replacement patterns in content", () => {
     });
     expect(html).toContain('<div id="root"></div>');
     expect(readInitialData(html).locale).toBe("en");
+  });
+});
+
+const LOADING_SHELL =
+  '<div class="min-h-screen bg-background flex items-center justify-center">' +
+  '<div class="text-center"><div role="status">' +
+  '<span class="!absolute">Loading...</span></div></div></div>';
+
+describe("HTML cache refuses a page built before content types exist", () => {
+  it("does not treat the route loading shell as a real page", () => {
+    expect(isMeaningfulSsrAppHtml(LOADING_SHELL)).toBe(false);
+    expect(isMeaningfulSsrAppHtml(APP_HTML)).toBe(true);
+    expect(isMeaningfulSsrAppHtml("")).toBe(false);
+  });
+
+  it("requires a non-empty content-type list before a copy may be stored", () => {
+    expect(contentTypesReadyForHtmlCache(null)).toBe(false);
+    expect(contentTypesReadyForHtmlCache({ queries: [] })).toBe(false);
+    expect(
+      contentTypesReadyForHtmlCache({
+        queries: [{ queryKey: ["/api/content-types"], data: [] }],
+      }),
+    ).toBe(false);
+    expect(
+      contentTypesReadyForHtmlCache({
+        queries: [{ queryKey: ["/api/content-types"], data: [{ name: "page" }] }],
+      }),
+    ).toBe(true);
   });
 });
 
