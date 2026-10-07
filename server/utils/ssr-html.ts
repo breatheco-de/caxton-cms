@@ -8,11 +8,35 @@ import { injectSsrSchemaHtml } from "../ssr-schema";
 import { buildInitialDataScriptTag, insertBefore, replaceLiteral } from "./html-inject";
 
 /**
+ * The public router paints this while `/api/content-types` has no data yet.
+ * `/en/home` does not match a page route until that list exists, so the whole
+ * document is the loading shell. It has HTML tags, but it is not a page.
+ */
+export function isContentTypeLoadingShell(appHtml: string | null | undefined): boolean {
+  if (typeof appHtml !== "string" || !appHtml) return false;
+  return /role=["']status["']/.test(appHtml) && />\s*Loading\.\.\.\s*<\/span>/.test(appHtml);
+}
+
+/**
+ * True when the seeded payload includes a non-empty content-type list.
+ * Without it the router cannot match real URLs and must not be stored.
+ */
+export function contentTypesReadyForHtmlCache(payload: InitialDataPayload | null | undefined): boolean {
+  const queries = payload?.queries;
+  if (!Array.isArray(queries)) return false;
+  const row = queries.find(
+    (query) => Array.isArray(query.queryKey) && query.queryKey[0] === "/api/content-types",
+  );
+  return Array.isArray(row?.data) && row.data.length > 0;
+}
+
+/**
  * True when SSR produced real body markup (not Suspense-null / whitespace-only).
  * Empty appHtml must not be injected into #root or HTML-cached as a successful page.
  */
 export function isMeaningfulSsrAppHtml(appHtml: string | null | undefined): boolean {
   if (typeof appHtml !== "string") return false;
+  if (isContentTypeLoadingShell(appHtml)) return false;
   const trimmed = appHtml.replace(/<!--[\s\S]*?-->/g, "").trim();
   if (!trimmed) return false;
   // Require at least one HTML tag (section wrappers, headings, etc.)
