@@ -14,6 +14,7 @@ import { findEntryItem, findEntryPresence, itemLocales, loadItemsForType } from 
 import { applyPerEntryLayer } from "./section-merge";
 import { applySectionLayoutDefaults } from "./section-layout-defaults";
 import { invalidateStaticListingCache } from "./static-listing-cache";
+import { loadYamlWithTemplateVars } from "./yaml-parse-cache";
 import { isEntryDetached } from "./shared-layout-entry";
 import { isEmptyDetachedLocaleEntry } from "./empty-locale";
 import { isReservedContentSlug } from "../shared/safe-href";
@@ -618,10 +619,9 @@ export class ContentIndex {
   }
 
   safeYamlLoad(raw: string): Record<string, unknown> | null {
-    const { escaped, map } = escapeTemplateVars(raw);
-    const parsed = yaml.load(escaped) as Record<string, unknown> | null;
-    if (!parsed) return null;
-    return unescapeObjectVars(parsed, map) as Record<string, unknown>;
+    const parsed = loadYamlWithTemplateVars(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
   }
 
   private addImageRef(ref: string, filePath: string): void {
@@ -1888,8 +1888,8 @@ export class ContentIndex {
       this.refreshRunning = false;
     }
     invalidateStaticListingCache(undefined, this.contentRoot);
-    void import("./html-page-cache")
-      .then(({ invalidateHtmlPageCache }) => invalidateHtmlPageCache())
+    void import("./html-rebuild")
+      .then(({ scheduleHotHtmlRebuild }) => scheduleHotHtmlRebuild("content-index-refresh", this.contentRoot))
       .catch(() => {});
   }
 

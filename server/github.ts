@@ -1353,7 +1353,7 @@ export async function reconcileSyncStateOnStartup(opts?: { repoUrl?: string; con
       ? (path.isAbsolute(opts.contentRoot) ? path.relative(process.cwd(), opts.contentRoot) : opts.contentRoot)
       : getDefaultContentFolder();
 
-    const refreshAfterPull = async (pulledCount: number) => {
+    const refreshAfterPull = async (pulledCount: number, files: string[]) => {
       if (pulledCount <= 0) return;
       try {
         const { getSiteContextMap } = await import("./site-manager");
@@ -1362,9 +1362,18 @@ export async function reconcileSyncStateOnStartup(opts?: { repoUrl?: string; con
           (ctx) => ctx.contentRootName === contentFolder || ctx.contentRoot.endsWith(contentFolder),
         );
         if (siteCtx?.contentIndex) {
-          siteCtx.contentIndex.refresh({ syncSlow: true });
+          const { flushAfterContentWrites } = await import("./content-write-flush");
+          flushAfterContentWrites({
+            ci: siteCtx.contentIndex,
+            contentTypes: [],
+            sitemapEntries: [],
+            siteId: siteCtx.contentRootName,
+            syncSlow: true,
+            touchedFiles: files,
+          });
+        } else {
+          clearRedirectCache();
         }
-        clearRedirectCache();
       } catch (e) {
         log.warn({ err: e }, "[SyncReconcile] Failed to refresh ContentIndex after stale pull");
       }
@@ -1444,7 +1453,7 @@ export async function reconcileSyncStateOnStartup(opts?: { repoUrl?: string; con
           "RECONCILE",
           `Pulled ${pulledCount} stale file(s) from GitHub: ${short}${staleFiles.length > 5 ? ` (+${staleFiles.length - 5} more)` : ""}`,
         );
-        await refreshAfterPull(pulledCount);
+        await refreshAfterPull(pulledCount, staleFiles);
       }
       if (pullErrors.length > 0) {
         logSync("ERROR", `Failed to pull ${pullErrors.length} stale file(s): ${pullErrors.join("; ")}`);
@@ -3073,6 +3082,7 @@ function pruneLocalFilesMissingFromRemote(
 async function refreshContentAfterBootstrapPull(
   contentFolder: string,
   pulledCount: number,
+  files: string[] = [],
 ): Promise<void> {
   if (pulledCount <= 0) return;
   try {
@@ -3082,8 +3092,15 @@ async function refreshContentAfterBootstrapPull(
       (ctx) => ctx.contentRootName === contentFolder || ctx.contentRoot.endsWith(contentFolder),
     );
     if (siteCtx?.contentIndex) {
-      siteCtx.contentIndex.refresh({ syncSlow: true });
-      clearRedirectCache();
+      const { flushAfterContentWrites } = await import("./content-write-flush");
+      flushAfterContentWrites({
+        ci: siteCtx.contentIndex,
+        contentTypes: [],
+        sitemapEntries: [],
+        siteId: siteCtx.contentRootName,
+        syncSlow: true,
+        touchedFiles: files,
+      });
       log.info(
         `[GitHub] Refreshed ContentIndex + redirect cache for ${siteCtx.contentRootName} after bootstrap pull of ${pulledCount} file(s)`,
       );
@@ -3284,7 +3301,10 @@ export async function bootstrapContentFromRemote(opts?: {
       syncedRemotePaths,
     });
     writeBootstrapCompleteFlag(opts?.contentRoot);
-    await refreshContentAfterBootstrapPull(contentFolder, pulled + pruneResult.deleted);
+    await refreshContentAfterBootstrapPull(contentFolder, pulled + pruneResult.deleted, [
+      ...pulledFiles,
+      ...pruneResult.deletedFiles,
+    ]);
     if (pulledFiles.length > 0 || pruneResult.deletedFiles.length > 0) {
       try {
         const { emitSiteBulkSynced } = await import("./content-events");
@@ -3502,7 +3522,7 @@ export async function bootstrapContentFromRemote(opts?: {
       syncedRemotePaths: remoteEntries.map((e) => e.path),
     });
     writeBootstrapCompleteFlag(opts?.contentRoot);
-    await refreshContentAfterBootstrapPull(contentFolder, pulled);
+    await refreshContentAfterBootstrapPull(contentFolder, pulled, pulledFiles);
     logSync(
       'AUTO-PULL',
       `Bootstrap: pulled=${pulled} skipped=${skipped} — sync state updated to ${headSha.slice(0, 7)}`,

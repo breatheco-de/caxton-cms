@@ -162,6 +162,9 @@ app.use(compression({
     if (req.headers['x-no-compression']) {
       return false;
     }
+    if (res.getHeader("Content-Encoding")) {
+      return false;
+    }
     if (req.path === '/api/github/site-archive' || req.path === '/api/github/pending-changes/zip') {
       return false;
     }
@@ -183,7 +186,7 @@ app.use((req, res, next) => {
     if (process.env.NODE_ENV !== 'production') {
       res.setHeader('Cache-Control', 'no-store');
     } else {
-      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
     }
   }
   next();
@@ -444,6 +447,24 @@ app.use((req, res, next) => {
   // /private document GETs require a staff session cookie (or OAuth return / embeds)
   app.use(privateHtmlAuthMiddleware);
 
+  // Sidequest calls this after it writes HTML files. Loopback + session secret only.
+  app.post("/api/internal/html-cache/adopt", async (req, res) => {
+    const addr = req.socket.remoteAddress || "";
+    const loopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+    const secret = process.env.SESSION_SECRET || "";
+    const header = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+    if (!loopback || !secret || header !== `Bearer ${secret}`) {
+      res.status(403).json({ ok: false });
+      return;
+    }
+    const body = req.body as { keys?: unknown } | undefined;
+    const keys = Array.isArray(body?.keys)
+      ? body.keys.filter((key): key is string => typeof key === "string")
+      : [];
+    const { adoptHtmlCacheKeys } = await import("./html-page-cache");
+    res.json({ ok: true, adopted: adoptHtmlCacheKeys(keys) });
+  });
+
   // Serve cached anonymous HTML before initial-data resolution / SSR work.
   // Only active in production — development always re-renders for HMR accuracy.
   if (app.get("env") !== "development") {
@@ -451,7 +472,13 @@ app.use((req, res, next) => {
       buildHtmlCacheKey,
       getCachedHtml,
       shouldBypassHtmlCache,
+      htmlDocumentCacheControl,
+      logHtmlRender,
+      pickCachedEncoding,
+      rehydrateHtmlPageCache,
     } = await import("./html-page-cache");
+    const { urlBakesStoredPageQuery } = await import("./initial-data-middleware");
+    rehydrateHtmlPageCache();
     const { resolveHtmlVariantKey } = await import("./html-variant-key");
     app.use(async (req, res, next) => {
       if (req.path.startsWith("/api/") || req.path.startsWith("/private/")) {
@@ -474,16 +501,31 @@ app.use((req, res, next) => {
         .split("#")[0];
       const variantKey = resolveHtmlVariantKey(req, res);
       (res.locals as any).htmlVariantKey = variantKey;
-      const cached = getCachedHtml(buildHtmlCacheKey(siteId, cleanUrl, variantKey));
+      const cacheKey = buildHtmlCacheKey(siteId, cleanUrl, variantKey);
+      const started = performance.now();
+      const cached = getCachedHtml(cacheKey);
       if (!cached) return next();
+      if (urlBakesStoredPageQuery(req.originalUrl || req.url || "/", site?.contentIndex)) {
+        return next();
+      }
 
-      const { injectGtmWebContainerId } = await import("./gtm-web-inject");
-      const html = injectGtmWebContainerId(cached.html, site?.contentRoot);
-
-      res
-        .status(cached.status)
-        .set({ "Content-Type": "text/html", "X-HTML-Cache": "HIT" })
-        .send(html);
+      const encoding = pickCachedEncoding(req.headers["accept-encoding"]);
+      const body = encoding === "br" ? cached.br : encoding === "gzip" ? cached.gzip : cached.html;
+      logHtmlRender({
+        url: cleanUrl,
+        ms: Math.round(performance.now() - started),
+        cache: "HIT",
+      });
+      if (encoding !== "identity") {
+        req.headers["x-no-compression"] = "1";
+      }
+      res.status(cached.status);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", htmlDocumentCacheControl());
+      res.setHeader("X-HTML-Cache", "HIT");
+      res.setHeader("Vary", "Accept-Encoding");
+      if (encoding !== "identity") res.setHeader("Content-Encoding", encoding);
+      res.send(body);
     });
   }
 

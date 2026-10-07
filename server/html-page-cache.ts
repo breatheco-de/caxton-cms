@@ -1,24 +1,105 @@
 /**
- * In-memory LRU cache for fully rendered anonymous HTML pages.
- * Keyed by site + path + effective A/B variant (live vs traffic-receiving variant).
- * Invalidated on content sync / cache clear / traffic allocation changes; TTL is a safety net.
+ * In-memory LRU of anonymous public HTML, keyed by build + site + path + variant.
+ * Bodies are stored precompressed (brotli and gzip). A hard TTL of hours is only
+ * a safety net; freshness comes from invalidation and background rebuilds.
+ *
+ * nginx in front must forward a response that already has Content-Encoding.
+ * The live site answers brotli today from that proxy. ngx_brotli / gzip skip
+ * bodies that are already encoded, which is what a hit relies on.
  */
+
+import fs from "fs";
+import os from "os";
+import path from "path";
+import crypto from "crypto";
+import zlib from "zlib";
+import { child } from "./logger";
+
+const log = child({ module: "html-page-cache" });
+
+const HARD_TTL_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_BYTE_BUDGET = 150 * 1024 * 1024;
+/** A save that is still showing the previous HTML after this long is deleted. */
+export const HTML_REBUILD_TOO_SLOW_MS = 8_000;
 
 export interface CachedHtmlPage {
-  html: string;
   status: number;
+  storedAt: number;
   expiresAt: number;
+  /** Generation written into this copy. */
+  generation: number;
+  /** Generation a rebuild was asked to produce, if newer than `generation`. */
+  pendingGeneration: number;
+  pendingSince: number;
+  /** A single-page save deletes this copy if the rebuild is still pending too long. */
+  pendingDeleteIfSlow: boolean;
+  br: Buffer;
+  gzip: Buffer;
+  byteLength: number;
+  html: string;
 }
 
-const TTL_MS = 5 * 60 * 1000;
-const MAX_ENTRIES = 250;
+type Stored = Omit<CachedHtmlPage, "html"> & { html?: string };
 
-const cache = new Map<string, CachedHtmlPage>();
+const cache = new Map<string, Stored>();
+let byteBudget = DEFAULT_BYTE_BUDGET;
+let usedBytes = 0;
+let nowFn = () => Date.now();
+let buildId = resolveHtmlBuildId();
+const inflight = new Map<string, Promise<unknown>>();
+const generations = new Map<string, number>();
 
-/**
- * @param variantKey - effective variant identity for this request (`live` or variant slug).
- *   Must be resolved (cookie / force_variant) before cache lookup so HIT/MISS is per variant.
- */
+function resolveHtmlBuildId(): string {
+  const fromEnv = process.env.HTML_CACHE_BUILD_ID?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const real = fs.realpathSync(process.cwd());
+    const base = path.basename(real);
+    if (/^[0-9a-f]{7,40}$/i.test(base)) return base;
+  } catch {
+    /* cwd may be unavailable */
+  }
+  return "dev";
+}
+
+export function getHtmlBuildId(): string {
+  return buildId;
+}
+
+export function setHtmlBuildIdForTests(id: string): void {
+  buildId = id;
+}
+
+export function setHtmlCacheClockForTests(fn: () => number): void {
+  nowFn = fn;
+}
+
+export function setHtmlCacheBudgetForTests(bytes: number): void {
+  byteBudget = bytes;
+}
+
+export function resetHtmlPageCacheForTests(): void {
+  cache.clear();
+  usedBytes = 0;
+  inflight.clear();
+  generations.clear();
+  byteBudget = DEFAULT_BYTE_BUDGET;
+  nowFn = () => Date.now();
+  buildId = resolveHtmlBuildId();
+}
+
+function cacheRootDir(): string {
+  if (process.env.VITEST) {
+    return path.join(os.tmpdir(), `website-v3-html-cache-${process.pid}`);
+  }
+  return path.resolve("data", "html-page-cache");
+}
+
+function diskPathForKey(key: string): string {
+  const hash = crypto.createHash("sha256").update(key).digest("hex");
+  return path.join(cacheRootDir(), buildId, `${hash}.json`);
+}
+
 export function buildHtmlCacheKey(
   siteId: string,
   pathname: string,
@@ -26,60 +107,384 @@ export function buildHtmlCacheKey(
 ): string {
   const clean = pathname.split("?")[0].split("#")[0] || "/";
   const variant = variantKey && variantKey !== "default" ? variantKey : "live";
-  return `${siteId}::${clean}::${variant}`;
+  return `${buildId}::${siteId}::${clean}::${variant}`;
+}
+
+export function parseHtmlCacheKey(key: string): {
+  siteId: string;
+  pathname: string;
+  variantKey: string;
+} | null {
+  const parts = key.split("::");
+  if (parts.length < 4) return null;
+  if (parts[0] !== buildId) return null;
+  const variantKey = parts[parts.length - 1] || "live";
+  const siteId = parts[1] || "default";
+  const pathname = parts.slice(2, -1).join("::") || "/";
+  return { siteId, pathname, variantKey };
+}
+
+function touch(key: string, entry: Stored): void {
+  cache.delete(key);
+  cache.set(key, entry);
+}
+
+function dropMemory(key: string): void {
+  const entry = cache.get(key);
+  if (!entry) return;
+  usedBytes -= entry.byteLength;
+  cache.delete(key);
+}
+
+function forgetDisk(key: string): void {
+  try {
+    fs.rmSync(diskPathForKey(key), { force: true });
+  } catch {
+    /* missing file is fine */
+  }
+}
+
+/** Drop the in-memory copy and its disk handoff so a later read cannot restore it. */
+function dropKey(key: string): void {
+  dropMemory(key);
+  forgetDisk(key);
+}
+
+function evictUntilBudget(): void {
+  while (usedBytes > byteBudget && cache.size > 0) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    dropKey(oldest);
+  }
+}
+
+function decorate(entry: Stored): CachedHtmlPage {
+  let decoded = entry.html;
+  const page = entry as CachedHtmlPage;
+  Object.defineProperty(page, "html", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      if (decoded === undefined) decoded = zlib.gunzipSync(entry.gzip).toString("utf8");
+      return decoded;
+    },
+  });
+  return page;
+}
+
+function isHardExpired(entry: Stored): boolean {
+  return nowFn() > entry.expiresAt;
+}
+
+export function htmlLooksPersonalized(html: string): boolean {
+  if (/name=["']csrf/i.test(html)) return true;
+  if (/\bnonce=["'][A-Za-z0-9+/=_-]{8,}["']/.test(html)) return true;
+  if (/4g_user_id=/.test(html)) return true;
+  if (/\bcsrfToken["']?\s*[:=]/i.test(html)) return true;
+  return false;
 }
 
 export function getCachedHtml(key: string): CachedHtmlPage | null {
+  const pending = cache.get(key);
+  if (!pending || pending.pendingGeneration > pending.generation) {
+    adoptDiskIfNewer(key);
+  }
   const entry = cache.get(key);
   if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    cache.delete(key);
+  if (isHardExpired(entry)) {
+    dropKey(key);
     return null;
   }
-  // Refresh LRU order
-  cache.delete(key);
-  cache.set(key, entry);
-  return entry;
+  if (
+    entry.pendingDeleteIfSlow &&
+    entry.pendingGeneration > entry.generation &&
+    entry.pendingSince > 0 &&
+    nowFn() - entry.pendingSince >= HTML_REBUILD_TOO_SLOW_MS
+  ) {
+    dropKey(key);
+    return null;
+  }
+  touch(key, entry);
+  return decorate(entry);
+}
+
+export function noteHtmlRebuildPending(
+  key: string,
+  generation: number,
+  deleteIfSlow = false,
+): void {
+  const entry = cache.get(key);
+  if (!entry) return;
+  entry.pendingGeneration = generation;
+  entry.pendingSince = nowFn();
+  entry.pendingDeleteIfSlow = deleteIfSlow;
+}
+
+export function htmlRebuildInFlight(key: string): boolean {
+  const entry = cache.get(key);
+  if (!entry) return false;
+  return entry.pendingGeneration > entry.generation;
+}
+
+export function currentHtmlGeneration(key: string): number {
+  return generations.get(key) ?? cache.get(key)?.generation ?? 0;
+}
+
+export function bumpHtmlGeneration(key: string): number {
+  const next = currentHtmlGeneration(key) + 1;
+  generations.set(key, next);
+  return next;
 }
 
 export function setCachedHtml(
   key: string,
   html: string,
   status: number,
+  opts?: { generation?: number },
 ): void {
-  if (cache.has(key)) cache.delete(key);
-  cache.set(key, {
-    html,
-    status,
-    expiresAt: Date.now() + TTL_MS,
-  });
-  while (cache.size > MAX_ENTRIES) {
-    const oldest = cache.keys().next().value;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
+  if (htmlLooksPersonalized(html)) {
+    log.warn({ key }, "refusing to cache HTML that looks per-visitor");
+    return;
   }
+  const generation = opts?.generation ?? currentHtmlGeneration(key);
+  if (generation < (generations.get(key) ?? 0)) return;
+
+  const raw = Buffer.from(html, "utf8");
+  const gzip = zlib.gzipSync(raw, { level: 6 });
+  const br = zlib.brotliCompressSync(raw, {
+    params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 },
+  });
+  const byteLength = gzip.length + br.length;
+  const storedAt = nowFn();
+  const next: Stored = {
+    status,
+    storedAt,
+    expiresAt: storedAt + HARD_TTL_MS,
+    generation,
+    pendingGeneration: generation,
+    pendingSince: 0,
+    pendingDeleteIfSlow: false,
+    br,
+    gzip,
+    byteLength,
+    html,
+  };
+  dropMemory(key);
+  cache.set(key, next);
+  usedBytes += byteLength;
+  generations.set(key, Math.max(generations.get(key) ?? 0, generation));
+  evictUntilBudget();
+  persistEntry(key, next);
+}
+
+function persistEntry(key: string, entry: Stored): void {
+  const existing = readDiskEntry(key);
+  if (existing && existing.generation > entry.generation) return;
+  const file = diskPathForKey(key);
+  const payload = JSON.stringify({
+    v: 1,
+    buildId,
+    key,
+    status: entry.status,
+    storedAt: entry.storedAt,
+    expiresAt: entry.expiresAt,
+    generation: entry.generation,
+    br: entry.br.toString("base64"),
+    gzip: entry.gzip.toString("base64"),
+  });
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, payload);
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    log.warn({ err, key }, "html cache disk write failed");
+  }
+}
+
+function readDiskEntry(key: string): Stored | null {
+  try {
+    const raw = fs.readFileSync(diskPathForKey(key), "utf8");
+    const parsed = JSON.parse(raw) as {
+      buildId?: string;
+      key?: string;
+      status?: number;
+      storedAt?: number;
+      expiresAt?: number;
+      generation?: number;
+      br?: string;
+      gzip?: string;
+    };
+    if (parsed.buildId !== buildId || parsed.key !== key) return null;
+    if (!parsed.gzip || !parsed.br) return null;
+    if (typeof parsed.expiresAt === "number" && nowFn() > parsed.expiresAt) return null;
+    const gzip = Buffer.from(parsed.gzip, "base64");
+    const br = Buffer.from(parsed.br, "base64");
+    const generation = parsed.generation ?? 0;
+    if (generation < (generations.get(key) ?? 0)) return null;
+    return {
+      status: parsed.status ?? 200,
+      storedAt: parsed.storedAt ?? nowFn(),
+      expiresAt: parsed.expiresAt ?? nowFn() + HARD_TTL_MS,
+      generation,
+      pendingGeneration: generation,
+      pendingSince: 0,
+      pendingDeleteIfSlow: false,
+      br,
+      gzip,
+      byteLength: gzip.length + br.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type HotHtmlPageSnapshot = {
+  pathname: string;
+  variantKey: string;
+  generation: number;
+};
+
+/** Pages already in memory for this site. The worker never sees this Map. */
+export function snapshotHotHtmlPages(siteId: string): HotHtmlPageSnapshot[] {
+  const out: HotHtmlPageSnapshot[] = [];
+  for (const key of cache.keys()) {
+    const parsed = parseHtmlCacheKey(key);
+    if (!parsed || parsed.siteId !== siteId) continue;
+    out.push({
+      pathname: parsed.pathname,
+      variantKey: parsed.variantKey,
+      generation: currentHtmlGeneration(key),
+    });
+  }
+  return out;
+}
+
+/** Load worker-written files into this process. A newer generation replaces the object in memory. */
+export function adoptHtmlCacheKeys(keys: string[]): number {
+  let adopted = 0;
+  for (const key of keys) {
+    if (typeof key !== "string" || !key) continue;
+    const before = cache.get(key)?.generation ?? -1;
+    adoptDiskIfNewer(key);
+    const after = cache.get(key)?.generation ?? -1;
+    if (after !== before) adopted += 1;
+  }
+  return adopted;
+}
+
+function adoptDiskIfNewer(key: string): void {
+  const disk = readDiskEntry(key);
+  if (!disk) return;
+  const memory = cache.get(key);
+  if (memory && disk.generation <= memory.generation && !isHardExpired(memory)) return;
+  if (memory) dropMemory(key);
+  cache.set(key, disk);
+  usedBytes += disk.byteLength;
+  generations.set(key, Math.max(generations.get(key) ?? 0, disk.generation));
+  evictUntilBudget();
+}
+
+export function rehydrateHtmlPageCache(): number {
+  const dir = path.join(cacheRootDir(), buildId);
+  let loaded = 0;
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  const files = names
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as {
+          key?: string;
+          storedAt?: number;
+        };
+        return parsed;
+      } catch {
+        return null;
+      }
+    })
+    .filter((row): row is { key?: string; storedAt?: number } => !!row?.key)
+    .sort((a, b) => (b.storedAt ?? 0) - (a.storedAt ?? 0));
+
+  for (const parsed of files) {
+    if (!parsed.key) continue;
+    const entry = readDiskEntry(parsed.key);
+    if (!entry) continue;
+    if (cache.has(parsed.key)) continue;
+    if (usedBytes + entry.byteLength > byteBudget) continue;
+    cache.set(parsed.key, entry);
+    usedBytes += entry.byteLength;
+    loaded += 1;
+  }
+  evictUntilBudget();
+  return loaded;
 }
 
 export function invalidateHtmlPageCache(): void {
   cache.clear();
+  usedBytes = 0;
+  try {
+    fs.rmSync(path.join(cacheRootDir(), buildId), { recursive: true, force: true });
+  } catch {
+    /* empty dir is fine */
+  }
 }
 
-/** Invalidate all cached HTML for a pathname across variants (prefix match). */
-export function invalidateHtmlPageCacheForPath(
-  siteId: string,
-  pathname: string,
-): void {
+export function invalidateHtmlPageCacheKey(key: string): void {
+  dropKey(key);
+}
+
+export function invalidateHtmlPageCacheForPath(siteId: string, pathname: string): void {
   const clean = pathname.split("?")[0].split("#")[0] || "/";
-  const prefix = `${siteId}::${clean}::`;
+  const marker = `::${siteId}::${clean}::`;
   for (const key of [...cache.keys()]) {
-    if (key.startsWith(prefix) || key === `${siteId}::${clean}`) {
-      cache.delete(key);
+    if (key.includes(marker)) dropKey(key);
+  }
+}
+
+/** A database row change drops cached pages for that slug, not every page of the type. */
+export function invalidateHtmlPageCacheForSlug(siteId: string, slug: string): void {
+  const clean = slug.trim().replace(/^\/+|\/+$/g, "");
+  if (!clean || clean.length < 2) return;
+  const needle = `/${clean}`;
+  for (const key of [...cache.keys()]) {
+    const parsed = parseHtmlCacheKey(key);
+    if (!parsed || parsed.siteId !== siteId) continue;
+    const pathName = parsed.pathname;
+    if (
+      pathName === needle ||
+      pathName.endsWith(needle) ||
+      pathName.includes(`${needle}/`)
+    ) {
+      dropKey(key);
     }
   }
 }
 
+export function listHotHtmlCacheKeys(): string[] {
+  return [...cache.keys()];
+}
+
 export function htmlPageCacheSize(): number {
   return cache.size;
+}
+
+export function htmlPageCacheBytes(): number {
+  return usedBytes;
+}
+
+export async function singleflight<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const existing = inflight.get(key);
+  if (existing) return existing as Promise<T>;
+  const promise = fn().finally(() => {
+    if (inflight.get(key) === promise) inflight.delete(key);
+  });
+  inflight.set(key, promise);
+  return promise;
 }
 
 /** Skip caching personalized / editor / authenticated document requests. */
@@ -136,10 +541,147 @@ export function shouldBypassHtmlCache(req: {
   if (authRaw) return true;
 
   const debugToken =
-    typeof headers.get === "function"
-      ? headers.get("x-debug-token")
-      : undefined;
+    typeof headers.get === "function" ? headers.get("x-debug-token") : undefined;
   if (debugToken) return true;
 
   return false;
+}
+
+const QUERY_PARAM_ALLOW = new Set([
+  "force_variant",
+  "raw",
+  "cache",
+  "edit",
+  "edit_mode",
+  "__site",
+]);
+
+export function containsParamPlaceholder(value: unknown, depth = 0): boolean {
+  if (depth > 12) return true;
+  if (typeof value === "string") return value.includes("{{ param.");
+  if (Array.isArray(value)) return value.some((item) => containsParamPlaceholder(item, depth + 1));
+  if (value !== null && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some((item) =>
+      containsParamPlaceholder(item, depth + 1),
+    );
+  }
+  return false;
+}
+
+const PARAM_NAME = /\{\{\s*param\.([a-zA-Z_][a-zA-Z0-9_]*)/g;
+
+/** Names used as `{{ param.X }}` in the page, before they are filled in. */
+export function collectParamPlaceholderNames(value: unknown, depth = 0, into = new Set<string>()): string[] {
+  if (depth > 12 || value == null) return [...into];
+  if (typeof value === "string") {
+    PARAM_NAME.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = PARAM_NAME.exec(value))) into.add(match[1]);
+    return [...into];
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectParamPlaceholderNames(item, depth + 1, into);
+    return [...into];
+  }
+  if (typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      collectParamPlaceholderNames(item, depth + 1, into);
+    }
+  }
+  return [...into];
+}
+
+function queryKeys(url: string): string[] {
+  const q = url.split("?")[1]?.split("#")[0];
+  if (!q) return [];
+  const keys: string[] = [];
+  for (const part of q.split("&")) {
+    const key = decodeURIComponent(part.split("=")[0] || "");
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+
+/**
+ * True when this URL fills a `{{ param.X }}` that the page actually uses.
+ * `?utm_source` and `?plan` do not, unless the page template names them.
+ */
+export function requestBakesQueryParamTemplate(
+  url: string,
+  source: unknown,
+  pathParamKeys?: Iterable<string>,
+): boolean {
+  const names = new Set(collectParamPlaceholderNames(source));
+  if (names.size === 0) return false;
+  const pathKeys = new Set(pathParamKeys ? [...pathParamKeys] : []);
+  for (const key of queryKeys(url)) {
+    if (QUERY_PARAM_ALLOW.has(key) || pathKeys.has(key)) continue;
+    if (names.has(key)) return true;
+  }
+  return false;
+}
+
+/** True when the URL has a query key that might be written into the page. `?edit=1` alone does not. */
+export function urlHasContentQuery(url: string): boolean {
+  return queryKeys(url).some((key) => !QUERY_PARAM_ALLOW.has(key));
+}
+
+export function pickCachedEncoding(acceptEncoding: string | undefined): "br" | "gzip" | "identity" {
+  const header = acceptEncoding || "";
+  const br = /(?:^|,)\s*br\s*(?:;q=([0-9.]+))?(?:$|,)/i.exec(header);
+  const gzip = /(?:^|,)\s*gzip\s*(?:;q=([0-9.]+))?(?:$|,)/i.exec(header);
+  const brQ = br ? (br[1] === undefined ? 1 : Number(br[1])) : 0;
+  const gzipQ = gzip ? (gzip[1] === undefined ? 1 : Number(gzip[1])) : 0;
+  if (brQ > 0 && brQ >= gzipQ) return "br";
+  if (gzipQ > 0) return "gzip";
+  return "identity";
+}
+
+export function htmlDocumentCacheControl(): string {
+  if (process.env.NODE_ENV !== "production") return "no-store";
+  return "public, max-age=60, stale-while-revalidate=300";
+}
+
+export function logHtmlRender(fields: {
+  url: string;
+  ms: number;
+  cache: "HIT" | "MISS" | "STALE";
+}): void {
+  log.info(fields, "html-render");
+}
+
+/** Sidequest finished writing HTML files. Ask this process to load them into the map it serves. */
+export async function notifyHtmlCacheAdopted(keys: string[]): Promise<void> {
+  const unique = [...new Set(keys.filter((key) => typeof key === "string" && key.length > 0))];
+  if (unique.length === 0) return;
+  if (process.env.VITEST) {
+    adoptHtmlCacheKeys(unique);
+    return;
+  }
+  const secret = process.env.SESSION_SECRET || "";
+  if (!secret) {
+    log.warn({ keys: unique.length }, "html cache adopt skipped: SESSION_SECRET is empty");
+    return;
+  }
+  const port = process.env.PORT || "5000";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3000);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/internal/html-cache/adopt`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({ keys: unique }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      log.warn({ status: res.status, keys: unique.length }, "html cache adopt call failed");
+    }
+  } catch (err) {
+    log.warn({ err, keys: unique.length }, "html cache adopt call failed");
+  } finally {
+    clearTimeout(timer);
+  }
 }

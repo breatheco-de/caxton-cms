@@ -20,6 +20,13 @@ vi.mock("./html-page-cache", () => ({
   invalidateHtmlPageCacheForPath: vi.fn(),
   invalidateHtmlPageCache: vi.fn(),
 }));
+vi.mock("./html-rebuild", () => ({
+  scheduleSavedHtmlPaths: vi.fn(),
+  scheduleHotHtmlRebuild: vi.fn(),
+  scheduleContentTypeListingRebuild: vi.fn(),
+  scheduleDatabaseReaderRebuild: vi.fn(),
+  scheduleCachedSlugHtmlRebuild: vi.fn(),
+}));
 
 import { clearRedirectCache } from "./redirects";
 import {
@@ -28,10 +35,12 @@ import {
 } from "./sitemap";
 import { invalidateContentCachesWithoutHtml } from "./routes/_helpers";
 import { invalidateHtmlPageCacheForPath, invalidateHtmlPageCache } from "./html-page-cache";
+import { scheduleSavedHtmlPaths, scheduleHotHtmlRebuild, scheduleContentTypeListingRebuild } from "./html-rebuild";
 import {
   flushAfterContentWrites,
   yamlMentionsRedirects,
   collectEntryHtmlPaths,
+  classifyTouchedContentFiles,
 } from "./content-write-flush";
 import {
   validateBulkMetaUpdates,
@@ -73,10 +82,26 @@ describe("flushAfterContentWrites", () => {
     expect(refreshSitemapEntriesForContentKey).not.toHaveBeenCalled();
 
     await vi.waitFor(() => {
-      expect(invalidateHtmlPageCacheForPath).toHaveBeenCalled();
+      expect(scheduleSavedHtmlPaths).toHaveBeenCalled();
     });
-    expect(invalidateHtmlPageCacheForPath).toHaveBeenCalledWith("site_test", "/en/home");
+    expect(scheduleSavedHtmlPaths).toHaveBeenCalledWith(
+      "site_test",
+      ["/en/home", "/en/blog/post"],
+      undefined,
+    );
+    expect(invalidateHtmlPageCacheForPath).not.toHaveBeenCalled();
     expect(invalidateHtmlPageCache).not.toHaveBeenCalled();
+    expect(scheduleHotHtmlRebuild).not.toHaveBeenCalled();
+    expect(scheduleContentTypeListingRebuild).toHaveBeenCalledWith({
+      siteId: "site_test",
+      contentRoot: undefined,
+      contentType: "page",
+    });
+    expect(scheduleContentTypeListingRebuild).toHaveBeenCalledWith({
+      siteId: "site_test",
+      contentRoot: undefined,
+      contentType: "blog",
+    });
   });
 
   it("passes syncSlow true when requested", () => {
@@ -107,6 +132,29 @@ describe("flushAfterContentWrites", () => {
       ["en", "es"],
     );
     expect(refreshSitemapEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe("classifyTouchedContentFiles", () => {
+  it("splits a blog entry and a database file", () => {
+    const ci = {
+      contentRoot: "/tmp/site_test",
+      getContentTypeConfig: (folder: string) => (folder === "blog" ? { directory: "blog" } : undefined),
+      normalizeType: (folder: string) => (folder === "blog" ? "blog" : folder),
+      getAlternateUrls: () => ({ en: "/en/blog/news/post" }),
+      buildUrl: () => "/en/blog/news/post",
+    };
+    expect(
+      classifyTouchedContentFiles(ci as any, [
+        "site_test/blog/post/en.yml",
+        "site_test/db/testimonials/testimonials.yml",
+        "site_test/blog/_common.template.yml",
+      ]),
+    ).toEqual({
+      contentTypes: ["blog"],
+      htmlPaths: ["/en/blog/news/post"],
+      databaseNames: ["testimonials"],
+    });
   });
 });
 

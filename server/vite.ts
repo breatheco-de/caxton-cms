@@ -28,7 +28,7 @@ import { createServer as createViteServer, createLogger, type ViteDevServer } fr
 import { isWeblifyDebug } from "../shared/debug";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
-import { resolveInitialData, type InitialDataPayload } from "./initial-data-middleware";
+import { resolveInitialData, urlBakesStoredPageQuery, type InitialDataPayload } from "./initial-data-middleware";
 import { injectSsrSchemaHtml } from "./ssr-schema";
 import {
   resolvePublicHtmlStatus,
@@ -39,9 +39,14 @@ import { getEntryAssets, buildEntryPreloadTags, buildEntryLinkHeader } from "./u
 import { assembleSsrDocument, isMeaningfulSsrAppHtml } from "./utils/ssr-html";
 import {
   buildHtmlCacheKey,
+  getCachedHtml,
+  htmlDocumentCacheControl,
+  logHtmlRender,
   setCachedHtml,
   shouldBypassHtmlCache,
+  singleflight,
 } from "./html-page-cache";
+import { buildAnonymousPageHtml } from "./render-hub-html";
 import { injectGtmWebContainerId } from "./gtm-web-inject";
 import { child as loggerChild } from "./logger";
 import { notePage, pageRouteForPath } from "./process-stats";
@@ -432,78 +437,79 @@ export function serveStatic(app: Express) {
       // Non-200 public URLs: skip SSR (matches renderHubHtml) — avoids empty-#root
       // retries for /landing/null and other unknown paths.
       if (!skipPrivate && !shouldSkipPublicSsr(status)) {
-        const initialDataPayload = await getInitialDataForRequest(url, res);
-        status = resolvePublicHtmlStatus({
-          url,
-          httpStatus:
-            initialDataPayload &&
-            typeof (initialDataPayload as { httpStatus?: number }).httpStatus === "number"
-              ? (initialDataPayload as { httpStatus: number }).httpStatus
-              : undefined,
-          contentIndex: siteContentIndex(res),
-        });
-
-        if (shouldSkipPublicSsr(status)) {
-          pageOutcome = "ssr_skipped_non_200";
-        } else {
-          const render = await getSsrRender();
-          if (!render) {
-            ssrDiag(
-              { url },
-              "no SSR render fn available — falling back to empty #root",
-            );
-          } else {
-            const indexHtml = await fs.promises.readFile(indexHtmlPath, "utf-8");
-            const t0 = Date.now();
-            let appHtml = await render(url, initialDataPayload);
-            if (!isMeaningfulSsrAppHtml(appHtml)) {
-              ssrDiag(
-                { url, appHtmlLength: appHtml?.length ?? 0, ms: Date.now() - t0 },
-                "SSR returned empty body, retrying once",
-              );
-              appHtml = await render(url, initialDataPayload);
+        const renderStarted = performance.now();
+        const built = await singleflight(cacheKey, async () => {
+          if (!bypassCache) {
+            const shared = getCachedHtml(cacheKey);
+            if (shared && !urlBakesStoredPageQuery(url, (res.locals as any).site?.contentIndex)) {
+              return { kind: "html" as const, html: shared.html, status: shared.status, fromCache: true };
             }
-            if (!isMeaningfulSsrAppHtml(appHtml)) {
-              ssrDiag(
-                {
-                  url,
-                  appHtmlLength: appHtml?.length ?? 0,
-                  ms: Date.now() - t0,
-                  preview: String(appHtml ?? "").slice(0, 120),
-                },
-                "SSR returned empty body after retry — not caching empty #root",
-              );
-              pageOutcome = "ssr_empty_fallback";
-              throw new Error("empty_ssr_app_html");
-            }
-
-            let html = assembleSsrDocument({
-              template: indexHtml,
-              appHtml,
-              payload: initialDataPayload,
-              contentRoot: (res.locals as any).site?.contentRoot,
-              url,
-              ssrSchemaHtml,
-            });
-
-            html = applyEntryModulePreload(html);
-            html = applyEntryPreloads(html, res);
-
-            // Cache HTML with the GTM placeholder intact; inject the live ID only on send
-            // so settings changes apply on cache HITs without busting the page cache.
-            const htmlForCache = html;
-            html = injectGtmWebContainerId(html, (res.locals as any).site?.contentRoot);
-
-            if (!bypassCache && status === 200) {
-              setCachedHtml(cacheKey, htmlForCache, status);
-              res.setHeader("X-HTML-Cache", "MISS");
-            }
-            pageOutcome = "ssr_ok";
-
-            maybeRecordPublicNotFound(_req, res, status);
-            res.status(status).set({ "Content-Type": "text/html" }).send(html);
-            return;
           }
+          const initialDataPayload = await getInitialDataForRequest(url, res);
+          const nextStatus = resolvePublicHtmlStatus({
+            url,
+            httpStatus:
+              initialDataPayload &&
+              typeof (initialDataPayload as { httpStatus?: number }).httpStatus === "number"
+                ? (initialDataPayload as { httpStatus: number }).httpStatus
+                : undefined,
+            contentIndex: siteContentIndex(res),
+          });
+          if (shouldSkipPublicSsr(nextStatus)) {
+            return { kind: "skip" as const, status: nextStatus };
+          }
+          const render = await getSsrRender();
+          if (!render) return { kind: "no-render" as const };
+          const indexHtml = await fs.promises.readFile(indexHtmlPath, "utf-8");
+          const built = await buildAnonymousPageHtml({
+            render,
+            indexHtml,
+            initialData: initialDataPayload,
+            url,
+            contentRoot: (res.locals as any).site?.contentRoot,
+            ssrSchemaHtml,
+          });
+          if (!built) return { kind: "empty" as const };
+          if (entryLinkHeader) {
+            const existing = res.getHeader("Link");
+            res.setHeader("Link", existing ? `${existing}, ${entryLinkHeader}` : entryLinkHeader);
+          }
+          if (!bypassCache && nextStatus === 200 && !built.skipCacheWrite) {
+            setCachedHtml(cacheKey, built.html, nextStatus);
+          }
+          return { kind: "html" as const, html: built.html, status: nextStatus, fromCache: false };
+        });
+        const renderMs = Math.round(performance.now() - renderStarted);
+
+        if (built.kind === "skip") {
+          status = built.status;
+          pageOutcome = "ssr_skipped_non_200";
+        } else if (built.kind === "no-render") {
+          ssrDiag({ url }, "no SSR render fn available — falling back to empty #root");
+        } else if (built.kind === "empty") {
+          pageOutcome = "ssr_empty_fallback";
+          throw new Error("empty_ssr_app_html");
+        } else {
+          status = built.status;
+          if (renderMs > 300 && !built.fromCache) {
+            ssrLogger.warn({ url, renderMs }, "ssr render slow");
+          }
+          logHtmlRender({
+            url: cleanUrlForSsr,
+            ms: renderMs,
+            cache: built.fromCache ? "HIT" : "MISS",
+          });
+          pageOutcome = "ssr_ok";
+          maybeRecordPublicNotFound(_req, res, status);
+          res
+            .status(status)
+            .set({
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": htmlDocumentCacheControl(),
+              "X-HTML-Cache": built.fromCache ? "HIT" : "MISS",
+            })
+            .send(built.html);
+          return;
         }
       } else if (!skipPrivate && shouldSkipPublicSsr(status)) {
         pageOutcome = "ssr_skipped_non_200";
