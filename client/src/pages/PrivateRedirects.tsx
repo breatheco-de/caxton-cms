@@ -1394,7 +1394,7 @@ export default function PrivateRedirects() {
                                           {
                                             value: "fallback" as const,
                                             label: "Fallback",
-                                            desc: "Only redirects if no real page matches. Real pages take priority.",
+                                            desc: "Only redirects if no real page matches. Pattern rules also skip when their destination page does not exist.",
                                           },
                                         ].map((option, i) => (
                                           <button

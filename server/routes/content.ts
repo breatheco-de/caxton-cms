@@ -5127,6 +5127,9 @@ export function registerContentRoutes(app: Express): void {
           path: result.relativePath,
           isVariantLayer: result.isVariantLayer,
           ...(result.deprecated ? { deprecated: result.deprecated } : {}),
+          ...(result.brokenInternalLinks?.length
+            ? { broken_internal_links: result.brokenInternalLinks }
+            : {}),
         });
         return;
       }
@@ -5135,6 +5138,7 @@ export function registerContentRoutes(app: Express): void {
         storage: result.storage,
         path: result.relativePath,
         isVariantLayer: result.isVariantLayer,
+        ...(result.linkWarnings?.length ? { link_warnings: result.linkWarnings } : {}),
       });
     } catch (err) {
       res.status(500).json({ error: String(err) });

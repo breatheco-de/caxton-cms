@@ -178,6 +178,7 @@ import {
   resolveRegistryReference,
 } from "../../scripts/validation/shared/imageRegistrySrc";
 import type { ProgressEvent } from "../../scripts/validation/fixers/types";
+import type { InternalLinkWarning } from "@shared/internalLinkGate";
 import { gcs } from "../gcs";
 import { z } from "zod";
 import {
@@ -1461,10 +1462,14 @@ export function registerSectionsRoutes(app: Express): void {
           deprecated_template_refs?: unknown;
           text_limit_warnings?: TextLimitViolation[];
           theme_color_warnings?: ThemeViolation[];
+          link_warnings?: InternalLinkWarning[];
         } = {
           success: true,
           updatedSections: result.updatedSections,
         };
+        if (result.linkWarnings?.length) {
+          response.link_warnings = result.linkWarnings;
+        }
         if (textLimitWarnings.length > 0) {
           response.text_limit_warnings = textLimitWarnings;
         }
@@ -1503,6 +1508,9 @@ export function registerSectionsRoutes(app: Express): void {
             ? { missing_fields: result.missingFields }
             : {}),
           ...(result.deprecated ? { deprecated: result.deprecated } : {}),
+          ...(result.brokenInternalLinks?.length
+            ? { broken_internal_links: result.brokenInternalLinks }
+            : {}),
         });
       }
     } catch (error) {
@@ -1859,7 +1867,10 @@ export function registerSectionsRoutes(app: Express): void {
           htmlPaths: collectEntryHtmlPaths(ci, contentType, slug),
           syncSlow: false,
         });
-        res.json({ success: true });
+        res.json({
+          success: true,
+          ...(result.linkWarnings?.length ? { link_warnings: result.linkWarnings } : {}),
+        });
       } else {
         res.status(400).json({
           error: result.error,
@@ -1868,6 +1879,9 @@ export function registerSectionsRoutes(app: Express): void {
             ? { missing_fields: result.missingFields }
             : {}),
           ...(result.deprecated ? { deprecated: result.deprecated } : {}),
+          ...(result.brokenInternalLinks?.length
+            ? { broken_internal_links: result.brokenInternalLinks }
+            : {}),
         });
       }
     } catch (error) {

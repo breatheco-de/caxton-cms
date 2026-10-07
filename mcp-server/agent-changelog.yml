@@ -6,6 +6,30 @@ window_days: 6
 
 entries:
   - date: "2026-10-06"
+    summary: "Saves and publish check every internal link on the page reaches a live page (broken_internal_links)"
+    agent_impact:
+      - "Live saves (update_fields, edit_entry_sections, add_entry_section, replace_entry_sections on live files), publish_draft and promote_variant check every internal link on the merged page: markdown, <a href>, url/link/*_url fields, bare /en/ and /es/ paths. Live = same answer as test_redirect. An old broken link in another field also blocks."
+      - "Failure: code broken_internal_links, action_required fix_broken_internal_links, broken_internal_links[] {link, field_path, component?, closest_live_match?, draft_target?}, next_actions update_fields (dot field_path) + get_entry_content. Nothing is written."
+      - "Draft (variant) saves never block: warnings broken_internal_links_on_draft / internal_link_draft_target; those links block at publish. Links that 301 to a live page pass with warning internal_link_redirects (links[].final_url). Shared type-template edits are not checked."
+      - "Blocking starts per site only after data migration 005_fix_broken_internal_links completed; before that live saves pass with warning broken_internal_links_not_enforced. Validator BROKEN_INTERNAL_LINK now also sees markdown and href links."
+    tools_changed: false
+    paths:
+      - server/internal-link-gate.ts
+      - server/internal-link-hits.ts
+      - shared/internalLinkGate.ts
+      - mcp-server/lib/internal-links-mcp.ts
+      - mcp-server/explain/seo.md
+      - scripts/migrations/005_fix_broken_internal_links.ts
+  - date: "2026-10-06"
+    summary: "Custom regex fallback redirects only fire when the destination is live"
+    agent_impact:
+      - "custom-redirects.yml regex rules with priority: fallback skip when their destination never reaches a live page or external URL: the next rule is tried, then 404. No more redirect-to-another-404 (e.g. /us/blog/x no longer goes to /en/blog/blog/x)."
+      - "A destination that needs a blog category fix, or is itself a redirect (max 3 hops), resolves straight to the final URL in one 301. test_redirect resolvedTo shows that final URL. Exact fallbacks, before rules, and page meta.redirects are unchanged."
+    tools_changed: false
+    paths:
+      - server/redirects.ts
+      - mcp-server/explain/redirects.md
+  - date: "2026-10-06"
     summary: "update_issue complete waits up to 25 seconds, then archives in that call"
     agent_impact:
       - "update_issue action complete still starts a diagnostics job and does not block the web process. The update call waits up to 25 seconds. If the check finishes, that same call archives (auto_completed_ids) or refuses with complete_rejected_still_open."

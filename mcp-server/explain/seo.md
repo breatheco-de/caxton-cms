@@ -104,3 +104,15 @@ Warn band → `confirm_seo_research_budget`; 100% → exhausted. Not a substitut
 - **Circular trap (meta vs body):** When a micro-save **touches** required SEO meta or editor.required paths (or on publish / full replace), the gate validates those fields on the post-write merged document. If both `meta.description` and body `description` are empty strings, fixing only one side still fails the other gate. Remedy: set all missing paths in **one** multi-field write — MCP `update_fields` (or `edit-sections` with multiple `update_field` ops). Multi-entry `update_entry_attributes` is safe attrs only (`meta.*` / `funnel.*`) and cannot set body `description`. Failures return `code: live_required_fields` + `missing_fields` and MCP `action_required: fix_live_required_fields`. Structural micro-saves with empty `touchedPaths` skip this sweep (gaps → Diagnostics).
 
 Field-level `editor.required`, reattach gates, schema_org companions, and empty-locale rules → topic `content_system`.
+
+## Internal link gate (`broken_internal_links`)
+
+Every internal link on the page must reach a live page. Same answer as Redirects → Test a URL (`server/redirects.ts` `createPublicUrlResolver`). Gate: `server/internal-link-gate.ts`; extractor shared with the validator and link index: `server/internal-link-hits.ts`.
+
+- **Scope:** the whole merged page, not only the field you touched. Markdown `[text](/path)`, `<a href="/path">`, URL fields (`url`, `href`, `link`, `cta_url`, `path`, `to`, `permalink`, `*_url`, `*_href`) and bare `/en/…` / `/es/…` paths. Skipped: `meta.redirects`, `#anchors`, `mailto:` / `tel:`, assets (`/images/`, `/uploads/`, file extensions), `/api/`, absolute URLs.
+- **Live save / publish / promote:** blocks on any link that does not resolve, and on links to pages that only exist as drafts. Failure: `code: broken_internal_links` + `broken_internal_links[] {link, field_path, component?, closest_live_match?, draft_target?}`; MCP `action_required: fix_broken_internal_links` with `update_fields` (`updates[].field_path` in dot form).
+- **Draft save (variant file):** never blocks. Broken links → warning `broken_internal_links_on_draft`; draft targets → `internal_link_draft_target`. Both block later at publish.
+- **Redirects:** a link that 301s to a live page passes with warning `internal_link_redirects` (`links[].final_url`). Prefer the final URL.
+- **Rollout per site:** blocking starts only after data migration `005_fix_broken_internal_links` completed for that site (Settings → General → Migrations). Before that, live saves pass with warning `broken_internal_links_not_enforced`.
+- **Not gated:** shared DB/template edits (`layout_target` type template), which have no single page URL.
+- **Fix:** copy URLs from list/get tools (`list_entries`, `test_redirect`) — never invent slugs. Use `closest_live_match` only when it is the page you meant; otherwise remove the link and keep the anchor text.

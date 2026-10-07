@@ -72,6 +72,11 @@ import {
   isDeprecatedFieldInfo,
 } from "../lib/deprecated-field-mcp.js";
 import { textLimitWarnings, textLimitsExceededResult } from "../lib/text-limits-mcp.js";
+import {
+  brokenInternalLinksResult,
+  internalLinkWarnings,
+  isBrokenInternalLinksError,
+} from "../lib/internal-links-mcp.js";
 import { TEXT_LIMITS_EXCEEDED_CODE } from "../../shared/component-text-limits.js";
 import { THEME_COLORS_CODE } from "../../shared/theme-palette.js";
 import { RENDER_REVIEW_REQUIRED_CODE, renderReviewRequiredResult } from "../lib/render-review-mcp.js";
@@ -4108,6 +4113,7 @@ export function registerPageTools(
         appendSharedTemplateHtmlCacheWarning(warnings, apiResult.data, layoutTarget);
         warnings.push(...deprecatedTemplateRefWarnings(apiResult.data.deprecated_template_refs));
         warnings.push(...textLimitWarnings(apiResult.data.text_limit_warnings));
+        warnings.push(...internalLinkWarnings(apiResult.data.link_warnings));
         results.push(`${localeEntries.length} field(s) → ${pathInfo.relativeHint}`);
       }
 
@@ -5750,6 +5756,15 @@ export function registerPageTools(
               publish: true,
             });
           }
+          if (isBrokenInternalLinksError(serverCode)) {
+            return brokenInternalLinksResult(errMsg, data, {
+              slug,
+              contentType,
+              locale: typeof data.locale === "string" ? data.locale : undefined,
+              variant: variantSlug,
+              publish: true,
+            });
+          }
           if (serverCode === THEME_COLORS_CODE) {
             return themeColorsRequiredResult(errMsg, data, {
               slug,
@@ -5998,6 +6013,15 @@ export function registerPageTools(
           }
           if (serverCode === TEXT_LIMITS_EXCEEDED_CODE) {
             return textLimitsExceededResult(errMsg, data, {
+              slug,
+              contentType,
+              locale,
+              variant: variantSlug,
+              publish: true,
+            });
+          }
+          if (isBrokenInternalLinksError(serverCode)) {
+            return brokenInternalLinksResult(errMsg, data, {
               slug,
               contentType,
               locale,
@@ -7330,6 +7354,7 @@ const ghWarning = githubCommitWarning(commitResult);
         ...schemaOrgPageOverrideWarnings(sectionToAdd),
         ...deprecatedTemplateRefWarnings(apiResult.data.deprecated_template_refs),
         ...textLimitWarnings(apiResult.data.text_limit_warnings),
+        ...internalLinkWarnings(apiResult.data.link_warnings),
       ];
 appendSharedTemplateHtmlCacheWarning(warnings, apiResult.data, layoutTarget);
       let side_effects: McpSideEffect[] | undefined;
@@ -7988,6 +8013,7 @@ appendSharedTemplateHtmlCacheWarning(warnings, apiResult.data, layoutTarget);
         ...variantWarningsIfNeeded(variant),
         ...deprecatedTemplateRefWarnings(apiResult.data.deprecated_template_refs),
         ...textLimitWarnings(apiResult.data.text_limit_warnings),
+        ...internalLinkWarnings(apiResult.data.link_warnings),
       ];
 appendSharedTemplateHtmlCacheWarning(warnings, apiResult.data, layoutTarget);
       let side_effects: McpSideEffect[] | undefined;
