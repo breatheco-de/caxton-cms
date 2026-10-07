@@ -215,6 +215,16 @@ export {
 } from "../shared/component-registry/text_block/v1.0/schema";
 
 // ============================================
+// Re-export Spacer Schemas from Component Registry
+// ============================================
+export {
+  spacerSizeSchema,
+  spacerSectionSchema,
+  type SpacerSize,
+  type SpacerSection,
+} from "./component-registry/spacer/v1.0/schema";
+
+// ============================================
 // Re-export Why Learn AI Schemas from Component Registry
 // ============================================
 export {
@@ -884,6 +894,7 @@ import { whyLearnAISectionSchema } from "./site-component-schemas";
 import { pricingSectionSchema } from "./site-component-schemas";
 import { faqSectionSchema } from "./component-registry/faq/v1.0/schema";
 import { breadcrumbSectionSchema } from "./component-registry/breadcrumb/v1.0/schema";
+import { spacerSectionSchema } from "./component-registry/spacer/v1.0/schema";
 import { geekchartSectionSchema } from "./component-registry/geekchart/v1.0/schema";
 import { schemaOrgSectionSchema } from "./component-registry/schema_org/v1.0/schema";
 export { schemaOrgSectionSchema, type SchemaOrgSection } from "./component-registry/schema_org/v1.0/schema";
@@ -1277,6 +1288,7 @@ const baseSectionSchema = z.union([
   pricingSectionSchema,
   faqSectionSchema,
   breadcrumbSectionSchema,
+  spacerSectionSchema,
   geekchartSectionSchema,
   schemaOrgSectionSchema,
   testimonialsSectionSchema,
