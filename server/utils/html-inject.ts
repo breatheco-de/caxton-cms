@@ -19,5 +19,10 @@ export function insertBefore(html: string, marker: string, fragment: string): st
 
 /** `<script id="__INITIAL_DATA__">` with `<` escaped so content can never close the tag. */
 export function buildInitialDataScriptTag(payload: unknown): string {
-  return `<script id="__INITIAL_DATA__" type="application/json">${JSON.stringify(payload).replace(/</g, "\\u003c")}</script>`;
+  let body = payload;
+  if (body && typeof body === "object" && "skipHtmlCache" in body) {
+    const { skipHtmlCache: _skip, ...rest } = body as Record<string, unknown>;
+    body = rest;
+  }
+  return `<script id="__INITIAL_DATA__" type="application/json">${JSON.stringify(body).replace(/</g, "\\u003c")}</script>`;
 }

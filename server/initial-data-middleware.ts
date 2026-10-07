@@ -23,6 +23,7 @@ import { attachVariableFieldsToSections } from "./database-single-loader";
 import { loadEntryForDelivery } from "./entry-delivery";
 import { typeUsesSharedTemplate } from "./layout-owner";
 import { resolveAllTemplateVars, buildContentDeliveryParamBag } from "./resolve-template-vars";
+import { requestBakesQueryParamTemplate, urlHasContentQuery } from "./html-page-cache";
 import { buildSingleEntryFromContent } from "./build-single-entry";
 import { hydrateEntryForDelivery } from "./hydrate-entry-delivery";
 import { databaseManager, type DatabaseManager } from "./database";
@@ -82,6 +83,8 @@ function firstPresetSizesFromImageEntry(
 interface SingleQuery {
   queryKey: unknown[];
   data: unknown;
+  /** Stripped before the payload is sent to the client. */
+  skipHtmlCache?: boolean;
 }
 
 export interface InitialDataPayload {
@@ -91,6 +94,11 @@ export interface InitialDataPayload {
   httpStatus?: number;
   /** Light colors used to paint section backgrounds as real colors. */
   themePaint?: import("@shared/theme-palette").ThemePaint;
+  /**
+   * Query-string {{ param.* }} must not be stored under a path-only cache key.
+   * Removed before `__INITIAL_DATA__` is written.
+   */
+  skipHtmlCache?: boolean;
 }
 
 export async function resolvePageQuery(
@@ -191,6 +199,11 @@ export async function resolvePageQuery(
             pageData,
           });
         }
+        const skipHtmlCache = requestBakesQueryParamTemplate(
+          url,
+          pageData,
+          urlPathParams ? Object.keys(urlPathParams) : undefined,
+        );
         const resolvedVars = resolveAllTemplateVars(pageData, {
           ...(singleEntry && Object.keys(singleEntry).length > 0 ? { singleEntry } : {}),
           param,
@@ -203,6 +216,7 @@ export async function resolvePageQuery(
         const { layout: _strip, ...pageRest } = pageData;
         return {
           queryKey: [getApiPath(contentType), slug, normalizedLocale],
+          ...(skipHtmlCache ? { skipHtmlCache: true } : {}),
           data: {
             ...pageRest,
             layout,
@@ -299,6 +313,11 @@ export async function resolvePageQuery(
         });
       }
 
+      const skipHtmlCache = requestBakesQueryParamTemplate(
+        url,
+        data,
+        urlPathParams ? Object.keys(urlPathParams) : undefined,
+      );
       if (singleEntry) {
         const resolved = resolveAllTemplateVars(data, {
           singleEntry,
@@ -321,6 +340,7 @@ export async function resolvePageQuery(
 
       return {
         queryKey: [apiPath, slug, isNonLocalized ? "auto" : locale],
+        ...(skipHtmlCache ? { skipHtmlCache: true } : {}),
         data,
       };
     }
@@ -729,6 +749,23 @@ function contentTypeFromPageQuery(
   return null;
 }
 
+/**
+ * A `?` that fills `{{ param.X }}` in the page YAML must be rendered, not served from the path copy.
+ * Query keys the page does not use (`utm`, `plan`) leave the copy in place.
+ */
+export function urlBakesStoredPageQuery(url: string, ci: ContentIndex | undefined): boolean {
+  if (!ci || !urlHasContentQuery(url)) return false;
+  const clean = url.split("?")[0].split("#")[0] || "/";
+  const resolved = ci.resolveUrl(clean);
+  if (!resolved) return false;
+  let locale = clean.startsWith("/es") ? "es" : "en";
+  if (resolved.params?.locale) locale = resolved.params.locale;
+  else if (resolved.patternLocale && resolved.patternLocale !== "default") locale = resolved.patternLocale;
+  const { data } = ci.loadMergedContent(resolved.contentType, resolved.slug, locale);
+  if (!data) return false;
+  return requestBakesQueryParamTemplate(url, data, resolved.params ? Object.keys(resolved.params) : undefined);
+}
+
 export async function resolveInitialData(
   url: string,
   ci: ContentIndex = contentIndex,
@@ -746,7 +783,11 @@ export async function resolveInitialData(
   };
 
   const queries: SingleQuery[] = [];
-  if (pageQuery) queries.push(pageQuery);
+  const skipHtmlCache = pageQuery?.skipHtmlCache === true;
+  if (pageQuery) {
+    delete pageQuery.skipHtmlCache;
+    queries.push(pageQuery);
+  }
   queries.push(variablesQuery);
 
   // Seed main-navbar and main-footer unconditionally so the header and footer
@@ -885,6 +926,7 @@ export async function resolveInitialData(
     locale: resolvedLocale,
     ...(themePaint ? { themePaint } : {}),
     ...(httpStatus ? { httpStatus } : {}),
+    ...(skipHtmlCache ? { skipHtmlCache: true } : {}),
   };
 }
 

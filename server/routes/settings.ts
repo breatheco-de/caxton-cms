@@ -265,6 +265,12 @@ function getContentRootName(res: Response): string {
   return path.isAbsolute(cr) ? path.relative(process.cwd(), cr) : cr;
 }
 
+function scheduleHotPublicHtml(contentRoot: string, reason: string): void {
+  void import("../html-rebuild")
+    .then(({ scheduleHotHtmlRebuild }) => scheduleHotHtmlRebuild(reason, contentRoot))
+    .catch(() => {});
+}
+
 function persistTrackingSettings(
   input: Parameters<typeof updateTrackingSettings>[0],
   res: Response,
@@ -325,6 +331,7 @@ export function registerSettingsRoutes(app: Express): void {
       theme.colors = { light: light || {}, dark: dark || {} };
       fs.writeFileSync(themePath, JSON.stringify(theme, null, 2));
       markFileAsModified('theme.json', undefined, undefined, getContentRoot(res));
+      scheduleHotPublicHtml(getContentRoot(res), "theme-colors");
       res.json({ success: true });
     } catch (error) {
       log.error({ err: error }, "Error saving theme colors:");
@@ -408,6 +415,7 @@ export function registerSettingsRoutes(app: Express): void {
       fs.writeFileSync(tmpPath, JSON.stringify(theme, null, 2));
       fs.renameSync(tmpPath, themePath);
       markFileAsModified('theme.json', undefined, undefined, getContentRoot(res));
+      scheduleHotPublicHtml(getContentRoot(res), "theme-palettes");
 
       if (unknownVarWarnings.length > 0) {
         res.json({ ok: true, warnings: unknownVarWarnings });
@@ -1630,6 +1638,11 @@ export function registerSettingsRoutes(app: Express): void {
         contentRoot,
       );
       markFileAsModified("settings.yml", undefined, undefined, contentRoot);
+      if (hasTm) {
+        void import("../html-rebuild")
+          .then(({ invalidateHotHtmlAndRebuild }) => invalidateHotHtmlAndRebuild("gtm"))
+          .catch(() => {});
+      }
       const opt = getOptimizationSettings(contentRoot);
       const secret = resolveIpnSecret();
       res.json({
@@ -3035,6 +3048,7 @@ export function registerSettingsRoutes(app: Express): void {
         }
       }
 
+      scheduleHotPublicHtml(getContentRoot(res), "menu-structure");
       res.json({
         success: true,
         name,
@@ -3121,6 +3135,7 @@ export function registerSettingsRoutes(app: Express): void {
       });
       fs.writeFileSync(filePath, yamlContent, "utf-8");
       markFileAsModified(filePath, authorName, undefined, getContentRoot(res));
+      scheduleHotPublicHtml(getContentRoot(res), "menu-translations");
 
       res.json({
         success: true,

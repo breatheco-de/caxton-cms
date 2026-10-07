@@ -1446,6 +1446,7 @@ export function registerSectionsRoutes(app: Express): void {
           commonMetaTouched: false,
           siteId,
           htmlPaths,
+          htmlScope: wroteSharedTemplate || isTemplateVersioningSlug(slug) ? "hot" : "paths",
           syncSlow,
         });
 
@@ -1478,7 +1479,7 @@ export function registerSectionsRoutes(app: Express): void {
         }
         if (wroteSharedTemplate) {
           response.shared_template_html_cache =
-            "Shared-template save: this page (and bound pages) had path-scoped HTML cache bust. Other URLs that share template.*.yml may keep previous anonymous HTML until TTL (~5 min). Slow content-index scan is async/coalesced. See server/content-write-flush.ts, server/html-page-cache.ts, server/content-index.ts.";
+            "Shared-template save: cached public pages keep the previous HTML until a background rebuild replaces them. Pages that were not cached render the new template on the next visit.";
         }
         if (result.warning) {
           response.warning = result.warning;

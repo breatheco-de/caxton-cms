@@ -1,10 +1,14 @@
 import fs from "fs";
 import path from "path";
 import type { ViteDevServer } from "vite";
-import { resolveInitialData } from "./initial-data-middleware";
+import type { ContentIndex } from "./content-index";
+import { resolveInitialData, urlBakesStoredPageQuery, type InitialDataPayload } from "./initial-data-middleware";
 import { resolvePublicHtmlStatus } from "./public-html-status";
+import { publicPageHead } from "./public-page-schema";
 import { applyEntryModulePreload } from "./utils/html-transforms";
+import { buildEntryPreloadTags, getEntryAssets } from "./utils/vite-manifest";
 import { assembleSsrDocument, isMeaningfulSsrAppHtml } from "./utils/ssr-html";
+import { injectGtmWebContainerId } from "./gtm-web-inject";
 import {
   buildHtmlCacheKey,
   getCachedHtml,
@@ -64,11 +68,73 @@ function resolveIndexHtmlPath(): string | null {
   return null;
 }
 
+function injectEntryPreloadTags(html: string): string {
+  const distPath = path.resolve(import.meta.dirname, "public");
+  const tags = buildEntryPreloadTags(getEntryAssets(distPath));
+  if (!tags) return html;
+  if (/<link[^>]+rel=["']stylesheet["']/i.test(html)) {
+    return html.replace(
+      /(<link[^>]+rel=["']stylesheet["'][^>]*>)/i,
+      (tag) => tag + "\n" + tags,
+    );
+  }
+  return html.replace(/(<head[^>]*>)/i, (tag) => tag + "\n" + tags);
+}
+
 export type RenderHubHtmlResult = {
   html: string;
   status: number;
   fromCache: boolean;
 };
+
+export type AnonymousPageHtml = {
+  html: string;
+  /** This response filled a `{{ param.X }}` and must not replace the path copy. */
+  skipCacheWrite: boolean;
+};
+
+function takeHtmlCacheMeta(payload: InitialDataPayload | null): { skipCacheWrite: boolean } {
+  if (!payload) return { skipCacheWrite: false };
+  const skipCacheWrite = payload.skipHtmlCache === true;
+  delete payload.skipHtmlCache;
+  return { skipCacheWrite };
+}
+
+/**
+ * The anonymous page document: React body, schema.org, preloads, and GTM.
+ * The visitor miss path and Sidequest both call this.
+ */
+export async function buildAnonymousPageHtml(opts: {
+  render: (url: string, payload: unknown) => Promise<string>;
+  indexHtml: string;
+  initialData: InitialDataPayload | null;
+  url: string;
+  contentRoot?: string;
+  ssrSchemaHtml?: string;
+}): Promise<AnonymousPageHtml | null> {
+  const meta = takeHtmlCacheMeta(opts.initialData);
+  let appHtml = await opts.render(opts.url, opts.initialData);
+  if (!isMeaningfulSsrAppHtml(appHtml)) {
+    log.warn({ url: opts.url, appHtmlLength: appHtml?.length ?? 0 }, "SSR returned empty body, retrying once");
+    appHtml = await opts.render(opts.url, opts.initialData);
+  }
+  if (!isMeaningfulSsrAppHtml(appHtml)) {
+    log.warn({ url: opts.url, appHtmlLength: appHtml?.length ?? 0 }, "SSR returned empty body after retry");
+    return null;
+  }
+  let html = assembleSsrDocument({
+    template: opts.indexHtml,
+    appHtml,
+    payload: opts.initialData,
+    contentRoot: opts.contentRoot,
+    url: opts.url,
+    ssrSchemaHtml: opts.ssrSchemaHtml,
+  });
+  html = applyEntryModulePreload(html);
+  html = injectEntryPreloadTags(html);
+  html = injectGtmWebContainerId(html, opts.contentRoot);
+  return { html, ...meta };
+}
 
 /**
  * Render a public hub page as anonymous live HTML. Uses HTML cache on hit;
@@ -79,6 +145,8 @@ export async function renderHubHtml(opts: {
   pathname: string;
   variantKey?: string;
   writeCache?: boolean;
+  /** When set, skip the memory hit and store this generation (Sidequest rebuild). */
+  generation?: number;
 }): Promise<RenderHubHtmlResult | null> {
   const clean = opts.pathname.split("?")[0].split("#")[0] || "/";
   if (clean.startsWith("/private/")) return null;
@@ -88,9 +156,11 @@ export async function renderHubHtml(opts: {
     opts.site.contentRootName || opts.site.contentRoot || opts.site.domain || "default";
   const cacheKey = buildHtmlCacheKey(siteId, clean, variantKey);
 
-  const cached = getCachedHtml(cacheKey);
-  if (cached) {
-    return { html: cached.html, status: cached.status, fromCache: true };
+  if (opts.generation == null) {
+    const cached = getCachedHtml(cacheKey);
+    if (cached && !urlBakesStoredPageQuery(opts.pathname, opts.site.contentIndex as ContentIndex | undefined)) {
+      return { html: cached.html, status: cached.status, fromCache: true };
+    }
   }
 
   const render = await loadSsrRender();
@@ -121,36 +191,25 @@ export async function renderHubHtml(opts: {
 
   try {
     const indexHtml = await fs.promises.readFile(indexHtmlPath, "utf-8");
-    let appHtml = await render(url, initialDataPayload);
-    if (!isMeaningfulSsrAppHtml(appHtml)) {
-      log.warn(
-        { pathname: clean, appHtmlLength: appHtml?.length ?? 0 },
-        "SSR returned empty body, retrying once",
-      );
-      appHtml = await render(url, initialDataPayload);
-    }
-    if (!isMeaningfulSsrAppHtml(appHtml)) {
-      log.warn(
-        { pathname: clean, appHtmlLength: appHtml?.length ?? 0 },
-        "SSR returned empty body after retry — not caching empty #root",
-      );
-      return null;
-    }
-
-    let html = assembleSsrDocument({
-      template: indexHtml,
-      appHtml,
-      payload: initialDataPayload,
-      contentRoot: opts.site.contentRoot,
+    const head = await publicPageHead(
       url,
+      opts.site.contentIndex as Parameters<typeof publicPageHead>[1],
+      opts.site.database as Parameters<typeof publicPageHead>[2],
+      opts.site.contentRoot,
+    );
+    const built = await buildAnonymousPageHtml({
+      render,
+      indexHtml,
+      initialData: initialDataPayload,
+      url,
+      contentRoot: opts.site.contentRoot,
+      ssrSchemaHtml: head.schemaHtml || undefined,
     });
-    html = applyEntryModulePreload(html);
-
-    if (opts.writeCache !== false) {
-      setCachedHtml(cacheKey, html, status);
+    if (!built) return null;
+    if (opts.writeCache !== false && !built.skipCacheWrite) {
+      setCachedHtml(cacheKey, built.html, status, { generation: opts.generation });
     }
-
-    return { html, status, fromCache: false };
+    return { html: built.html, status, fromCache: false };
   } catch (err) {
     log.warn({ err, pathname: clean }, "renderHubHtml failed");
     return null;
