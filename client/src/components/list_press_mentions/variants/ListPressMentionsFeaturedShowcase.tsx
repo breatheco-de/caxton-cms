@@ -154,7 +154,6 @@ export default function ListPressMentionsFeaturedShowcase({ data }: ListPressMen
 
   return (
     <section
-      className="py-16"
       style={bgStyle}
       data-testid="section-press-mentions-showcase"
     >

@@ -508,7 +508,7 @@ function BenefitCardsVariant({ data }: TwoColumnProps) {
   
   return (
     <section 
-      className={`py-section ${backgroundClass}`}
+      className={backgroundClass}
       data-testid="section-two-column-benefit-cards"
     >
       <div className="max-w-6xl mx-auto px-4">

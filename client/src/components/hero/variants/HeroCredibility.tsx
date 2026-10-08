@@ -171,7 +171,7 @@ export default function HeroCredibility({ data }: HeroCredibilityProps) {
 
   return (
     <section data-testid="section-hero-credibility" className="max-w-6xl mx-auto">
-      <div className="flex flex-col px-4 md:px-10 pt-10 pb-6 w-full max-w-[1200px] mx-auto">
+      <div className="flex flex-col px-4 md:px-10 w-full max-w-[1200px] mx-auto">
         <div className="flex flex-col lg:flex-row items-stretch justify-between gap-8">
 
           {/* ── LEFT COLUMN ── */}

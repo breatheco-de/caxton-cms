@@ -27,7 +27,6 @@ export function TextBlockDefault({ data }: TextBlockProps) {
 
   return (
     <section
-      className="py-12 md:py-16"
       data-testid="section-text-block"
     >
       <div className={cn("px-4 w-full", maxWidthClass, centerBlock, alignClass)}>

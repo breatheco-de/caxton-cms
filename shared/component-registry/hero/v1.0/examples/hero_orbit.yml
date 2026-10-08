@@ -39,4 +39,4 @@ paddingY:
 maxWidth:
   mobile: xl
   desktop: xl
-background: linear-gradient(to bottom left, hsl(var(--primary) / 0.14), transparent 60%)
+background: hero-orbit-gradient

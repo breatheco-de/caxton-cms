@@ -65,7 +65,7 @@ export default function BentoCards({ data }: BentoCardsProps) {
 
   return (
     <section
-      className={`py-16 md:py-24 overflow-hidden ${background || ""}`}
+      className={`overflow-x-clip ${background || ""}`}
       data-testid="section-bento-cards"
     >
       <div className="max-w-6xl mx-auto px-4 mb-10">

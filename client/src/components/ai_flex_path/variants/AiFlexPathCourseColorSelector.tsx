@@ -1156,7 +1156,7 @@ export default function AiFlexPathCourseColorSelector({ data }: { data: AiFlexPa
   const overlaySlotColor = overSlot !== null ? getSlotColor(overSlot, slotColors) : null;
 
   return (
-    <div className="pb-16" style={{ fontFamily: "'Inter Variable',system-ui,-apple-system,sans-serif" }}>
+    <div style={{ fontFamily: "'Inter Variable',system-ui,-apple-system,sans-serif" }}>
       <div className="mx-auto">
         <div className="flex">
           <div className="hidden md:flex w-16 lg:w-28 flex-shrink-0 items-start justify-center pt-[2px]">

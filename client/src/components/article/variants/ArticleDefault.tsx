@@ -747,7 +747,7 @@ export function Article({ data }: ArticleProps) {
 
   return (
     <div
-      className="w-full px-4 py-8 md:px-6 lg:px-8"
+      className="w-full px-4 md:px-6 lg:px-8"
       data-testid="article-section"
       data-toc-group={toc_group || undefined}
       data-article-split={isSplit ? "true" : undefined}

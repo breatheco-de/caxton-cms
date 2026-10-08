@@ -60,6 +60,6 @@ yaml: |
         light_text: 4.8 ★
     background: light-blue-5-gradient
     paddingY:
-      desktop: none
+      desktop: 40px 24px
     pills_url: "#list_press_mentions-w7r1sh"
     marquee_static: true

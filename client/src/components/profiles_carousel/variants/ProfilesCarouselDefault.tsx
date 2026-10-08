@@ -167,7 +167,7 @@ export default function ProfilesCarousel({ data }: ProfilesCarouselProps) {
       style={sectionBackgroundStyle(data.background)}
       data-testid="section-profiles-carousel"
     >
-      <div className="max-w-7xl mx-auto px-4 md:px-8 py-12 md:py-16">
+      <div className="max-w-7xl mx-auto px-4 md:px-8">
         {(heading || description) && (
           <div className="text-center mb-10">
             {heading && (

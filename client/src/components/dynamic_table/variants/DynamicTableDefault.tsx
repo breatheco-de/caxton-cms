@@ -634,7 +634,7 @@ export function DynamicTable({ data }: DynamicTableProps) {
   const bgStyle: React.CSSProperties = sectionBackgroundStyle(data.background);
 
   return (
-    <section className="py-12" style={bgStyle} data-testid="section-dynamic-table">
+    <section style={bgStyle} data-testid="section-dynamic-table">
       <div className="max-w-7xl mx-auto px-4 md:px-6">
         {(data.title || data.subtitle) && (
           <div className="mb-6">

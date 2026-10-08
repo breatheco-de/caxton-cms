@@ -5,6 +5,30 @@
 window_days: 6
 
 entries:
+  - date: "2026-10-08"
+    summary: "Section outer padding moved from variant code into each section's paddingY"
+    agent_impact:
+      - "About 40 variants (banner, testimonials_slide, features_quad default, course_selector, graduates_stats, article, hero credibility, ...) no longer add their own outer py-*. Existing sections got the old padding added to paddingY (often px values like 48px or two-value 'md 80px'); live pages render the same."
+      - "New sections of these types render with 0 vertical padding unless you set paddingY or insert from a registry example (examples were updated). Do not remove paddingY from these sections to 'fix' px values; that padding used to be in code."
+      - "self_padded now: features_quad [laptopEdge], why_learn_ai [laptopEdge], project_showcase true; numbered_steps no longer self_padded. Variant names in self_padded match ignoring -/_/case (laptop-edge = laptopEdge)."
+      - "Non-effects: no MCP tool args or payload shapes changed; marginY and paddingX untouched. Where a variant root painted a Tailwind bg-* class around the moved padding, that section's background became the equivalent theme ID or hsl(var(...)) value."
+    tools_changed: false
+    paths:
+      - scripts/section-padding/inventory.ts
+      - shared/component-layout-traits.ts
+      - mcp-server/explain/design.md
+  - date: "2026-10-08"
+    summary: "Sites without their own theme.json use the inherit_components_from parent's theme; shared base palette"
+    agent_impact:
+      - "A site with inherit_components_from and no theme.json now uses the parent's theme.json (whole file, no merge) for theme_colors_required, recipes, insights and validators. Before, such sites had no theme and the color gate was off; agent writes there now need theme IDs from the parent theme."
+      - "Shared components (shared/component-registry/) and their examples may only use base palette background IDs: background, muted, card, primary, secondary, accent, light-blue-5, light-blue-5-gradient, hero-orbit-gradient (SHARED_BASE_PALETTE in shared/theme-palette.ts). Every theme keeps them."
+      - "Non-effects: no MCP tool args or payload shapes changed; theme_colors_required payload unchanged (allowed IDs now present on inheriting sites)."
+    tools_changed: false
+    paths:
+      - server/theme-config.ts
+      - shared/theme-palette.ts
+      - mcp-server/explain/design.md
+      - mcp-server/explain/content_system.md
   - date: "2026-10-06"
     summary: "Saves and publish check every internal link on the page reaches a live page (broken_internal_links)"
     agent_impact:

@@ -1,7 +1,9 @@
 name: "Simple Article without TOC"
 description: "Plain article rendering without table of contents, suitable for short-form content"
 yaml: |
-  - type: article
+  - paddingY:
+      desktop: md
+    type: article
     show_toc: false
     content: |
       # About Our Program

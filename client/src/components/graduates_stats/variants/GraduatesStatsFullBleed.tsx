@@ -84,7 +84,7 @@ export default function GraduatesStatsFullBleed({ data }: GraduatesStatsFullBlee
 
   return (
     <section 
-      className={`py-16 md:py-24 overflow-hidden ${background || ''}`}
+      className={`overflow-x-clip ${background || ''}`}
       data-testid="section-graduates-stats"
     >
       {(heading || subheading) && (

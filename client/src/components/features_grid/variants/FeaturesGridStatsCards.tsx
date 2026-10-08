@@ -10,7 +10,7 @@ interface FeaturesGridStatsCardsProps {
 export default function FeaturesGridStatsCards({ data }: FeaturesGridStatsCardsProps) {
   return (
     <section 
-      className={`py-12 ${data.background || 'bg-primary/5'}`}
+      className={data.background || 'bg-primary/5'}
       data-testid="section-features-grid-stats-cards"
     >
       <div className="max-w-6xl mx-auto px-4 ">

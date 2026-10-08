@@ -83,7 +83,6 @@ export function Banner({ data }: BannerProps) {
 
   return (
     <section 
-      className="py-12 md:py-16"
       data-testid="section-banner"
     >
       <div className="max-w-6xl mx-auto px-4">

@@ -1,6 +1,8 @@
 name: geekchart - default
 yaml: |
-  - type: geekchart
+  - paddingY:
+      desktop: md
+    type: geekchart
     version: "1.0"
     source: |
       flowchart LR

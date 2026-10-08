@@ -90,7 +90,7 @@ export function GraduatesStatsStandard({ data }: GraduatesStatsStandardProps) {
 
   return (
     <section 
-      className={`py-16 md:py-24 ${background || ''}`}
+      className={background || ''}
       data-testid="section-graduates-stats"
     >
       <div className="max-w-6xl mx-auto px-4">

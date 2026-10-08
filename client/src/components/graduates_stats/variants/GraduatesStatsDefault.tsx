@@ -246,7 +246,7 @@ export default function GraduatesStatsDefault({ data }: GraduatesStatsDefaultPro
 
   return (
     <section 
-      className={`py-16 md:py-24 ${background || ''}`}
+      className={background || ''}
       data-testid="section-graduates-stats"
     >
       <div>

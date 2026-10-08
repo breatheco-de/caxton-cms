@@ -436,6 +436,19 @@ app.use((req, res, next) => {
     })),
   );
 
+  // Shared components only use base palette IDs; warn when a site's own theme drops one.
+  try {
+    const { sitesMissingBasePalette } = await import("./design/shared-base-palette");
+    for (const row of sitesMissingBasePalette()) {
+      logger.warn(
+        { contentFolder: row.contentFolder, missing: row.missing },
+        `[theme] ${row.contentFolder}/theme.json lacks shared base palette IDs: ${row.missing.join(", ")} — shared components using them will fall back to default colors`,
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, "[theme] base palette check failed");
+  }
+
   app.use(siteResolutionMiddleware);
 
   const server = await registerRoutes(app);
