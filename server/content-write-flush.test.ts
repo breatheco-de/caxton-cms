@@ -112,6 +112,7 @@ describe("flushAfterContentWrites", () => {
       syncSlow: true,
     });
     expect(ci.refresh).toHaveBeenCalledWith({ syncSlow: true });
+    expect(scheduleHotHtmlRebuild).not.toHaveBeenCalled();
   });
 
   it("uses content-key sitemap refresh when commonMetaTouched", () => {
@@ -141,14 +142,19 @@ describe("classifyTouchedContentFiles", () => {
       contentRoot: "/tmp/site_test",
       getContentTypeConfig: (folder: string) => (folder === "blog" ? { directory: "blog" } : undefined),
       normalizeType: (folder: string) => (folder === "blog" ? "blog" : folder),
-      getAlternateUrls: () => ({ en: "/en/blog/news/post" }),
-      buildUrl: () => "/en/blog/news/post",
+      getAlternateUrls: (slug: string) => ({
+        en: `/en/blog/news/${slug}`,
+        es: `/es/blog/noticias/${slug}`,
+      }),
+      buildUrl: (_type: string, locale: string, slug: string) =>
+        locale === "es" ? `/es/blog/noticias/${slug}` : `/en/blog/news/${slug}`,
     };
     expect(
       classifyTouchedContentFiles(ci as any, [
         "site_test/blog/post/en.yml",
         "site_test/db/testimonials/testimonials.yml",
         "site_test/blog/_common.template.yml",
+        "site_test/blog/template.en.yml",
       ]),
     ).toEqual({
       contentTypes: ["blog"],
@@ -166,18 +172,30 @@ describe("yamlMentionsRedirects", () => {
 });
 
 describe("collectEntryHtmlPaths", () => {
-  it("returns alternate paths", () => {
+  it("returns only the locale that was written", () => {
     const paths = collectEntryHtmlPaths(
       {
-        getAlternateUrls: () => ({ en: "/en/home", es: "/es/inicio" }),
-        buildUrl: () => "/en/home",
+        getAlternateUrls: () => ({ en: "/en/outcomes", es: "/es/resultados" }),
+        buildUrl: () => "/en/outcomes",
       } as any,
       "page",
-      "home",
+      "outcomes",
       "en",
     );
-    expect(paths).toContain("/en/home");
-    expect(paths).toContain("/es/inicio");
+    expect(paths).toEqual(["/en/outcomes"]);
+  });
+
+  it("returns every locale when the file is not one locale", () => {
+    const paths = collectEntryHtmlPaths(
+      {
+        getAlternateUrls: () => ({ en: "/en/outcomes", es: "/es/resultados" }),
+        buildUrl: () => "/en/outcomes",
+      } as any,
+      "page",
+      "outcomes",
+    );
+    expect(paths).toContain("/en/outcomes");
+    expect(paths).toContain("/es/resultados");
   });
 });
 

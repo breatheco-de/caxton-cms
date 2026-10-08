@@ -6,6 +6,11 @@
 
 import path from "path";
 import { child } from "./logger";
+import { ContentIndex } from "./content-index";
+import { DatabaseManager } from "./database";
+import { MediaGallery } from "./media-gallery";
+import { requireSiteConfigs } from "./site-config";
+import type { SiteContext } from "./site-manager";
 import { enqueueJob } from "./jobs/queue";
 import {
   bumpHtmlGeneration,
@@ -31,6 +36,43 @@ export type HtmlRebuildTarget = {
 function contentRootForSite(siteId: string, explicit?: string): string {
   if (explicit) return explicit;
   return path.resolve(siteId);
+}
+
+/**
+ * Site slice a Sidequest HTML job needs to render. The worker has no Express
+ * site map, so each job builds the index, the database, the gallery, and the
+ * sites.yml config the image fallback reads.
+ */
+export function buildHtmlRebuildSite(contentRootInput: string, siteId?: string): SiteContext {
+  const contentRoot = path.resolve(contentRootInput);
+  const folderName = path.relative(process.cwd(), contentRoot) || path.basename(contentRoot);
+  const id = siteId || folderName;
+  const mediaGallery = new MediaGallery(folderName);
+  const database = new DatabaseManager(contentRoot, mediaGallery);
+  const contentIndex = new ContentIndex(contentRoot, database);
+  contentIndex.scanFast();
+  let domain = id;
+  let contentFolder = id;
+  let fallbackContentFolder: string | undefined;
+  try {
+    const match = requireSiteConfigs().find((site) => site.contentFolder === id);
+    if (match) {
+      domain = match.domain;
+      contentFolder = match.contentFolder;
+      fallbackContentFolder = match.fallbackContentFolder;
+    }
+  } catch {
+    /* sites.yml unavailable */
+  }
+  return {
+    contentRoot,
+    contentRootName: id,
+    domain,
+    config: { domain, contentFolder, fallbackContentFolder },
+    contentIndex,
+    database,
+    mediaGallery,
+  } as SiteContext;
 }
 
 export async function enqueueHtmlRebuild(

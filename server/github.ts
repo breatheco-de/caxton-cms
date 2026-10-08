@@ -27,6 +27,9 @@ import {
   type PendingChange,
 } from './sync-state';
 import { child } from "./logger";
+import type { ContentIndex } from "./content-index";
+import { collectAttachedHtmlPaths } from "./content-write-flush";
+import { isSharedTemplateBasename } from "./shared-layout-paths";
 import { getDefaultContentFolder, getDefaultContentRoot } from "./site-config";
 import {
   contentFolderFromRegistryPath,
@@ -35,6 +38,31 @@ import {
   mirrorComponentRegistryToPersistentForFile,
 } from "./component-registry-persistent";
 const log = child({ module: "github" });
+
+/** Public URLs of entries that still use a shared template present in a pull. */
+function publicPathsForPulledSharedTemplates(
+  ci: ContentIndex,
+  files: string[],
+): { htmlPaths: string[]; contentTypes: string[] } {
+  const rootName = path.basename(ci.contentRoot);
+  const types = new Set<string>();
+  const htmlPaths: string[] = [];
+  for (const file of files) {
+    let rel = file.split("\\").join("/");
+    const prefix = `${rootName}/`;
+    if (rel.startsWith(prefix)) rel = rel.slice(prefix.length);
+    else if (path.isAbsolute(rel)) rel = path.relative(ci.contentRoot, rel).split("\\").join("/");
+    const parts = rel.split("/").filter(Boolean);
+    if (parts.length !== 2) continue;
+    if (!ci.getContentTypeConfig(parts[0])) continue;
+    if (!isSharedTemplateBasename(parts[1])) continue;
+    const contentType = ci.normalizeType(parts[0]);
+    if (types.has(contentType)) continue;
+    types.add(contentType);
+    htmlPaths.push(...collectAttachedHtmlPaths(ci, contentType));
+  }
+  return { htmlPaths: [...new Set(htmlPaths)], contentTypes: [...types] };
+}
 
 const FORCE_PULL_TMP_PREFIX = 'website-v3-force-pull-';
 const ARCHIVE_DOWNLOAD_STALL_MS = 120_000;
@@ -1363,13 +1391,15 @@ export async function reconcileSyncStateOnStartup(opts?: { repoUrl?: string; con
         );
         if (siteCtx?.contentIndex) {
           const { flushAfterContentWrites } = await import("./content-write-flush");
+          const spread = publicPathsForPulledSharedTemplates(siteCtx.contentIndex, files);
           flushAfterContentWrites({
             ci: siteCtx.contentIndex,
-            contentTypes: [],
+            contentTypes: spread.contentTypes,
             sitemapEntries: [],
             siteId: siteCtx.contentRootName,
             syncSlow: true,
             touchedFiles: files,
+            htmlPaths: spread.htmlPaths,
           });
         } else {
           clearRedirectCache();
@@ -3093,13 +3123,15 @@ async function refreshContentAfterBootstrapPull(
     );
     if (siteCtx?.contentIndex) {
       const { flushAfterContentWrites } = await import("./content-write-flush");
+      const spread = publicPathsForPulledSharedTemplates(siteCtx.contentIndex, files);
       flushAfterContentWrites({
         ci: siteCtx.contentIndex,
-        contentTypes: [],
+        contentTypes: spread.contentTypes,
         sitemapEntries: [],
         siteId: siteCtx.contentRootName,
         syncSlow: true,
         touchedFiles: files,
+        htmlPaths: spread.htmlPaths,
       });
       log.info(
         `[GitHub] Refreshed ContentIndex + redirect cache for ${siteCtx.contentRootName} after bootstrap pull of ${pulledCount} file(s)`,

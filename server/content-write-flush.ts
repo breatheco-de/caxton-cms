@@ -15,6 +15,9 @@ import {
 } from "./sitemap";
 import { invalidateContentCachesWithoutHtml } from "./routes/_helpers";
 import { getSupportedLocales } from "./settings";
+import { listAttachedEntries } from "./shared-layout-entry";
+import { isSharedTemplateBasename } from "./shared-layout-paths";
+import { localeFromYamlFilename } from "./raw-file-explain";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -44,7 +47,7 @@ export type FlushAfterContentWritesOpts = {
   htmlPaths?: string[];
   /**
    * `paths` (default) keeps each saved URL and rebuilds it in the background.
-   * `hot` rebuilds every URL already in memory (shared template, menu, theme).
+   * `hot` rebuilds every URL already in memory (menu, theme).
    */
   htmlScope?: "paths" | "hot";
   /** When true, run sync slow scan (redirect-critical writes). */
@@ -54,6 +57,7 @@ export type FlushAfterContentWritesOpts = {
   /**
    * Files from a pull or another batch. Entries rebuild their URL and the pages
    * that list that type. `db/<name>/…` rebuilds pages that read that database.
+   * A shared template file is not an entry: the caller passes those public paths.
    */
   touchedFiles?: string[];
   /** Database slugs whose readers should rebuild, when the caller already knows them. */
@@ -89,6 +93,8 @@ export function classifyTouchedContentFiles(
     }
     if (parts.length < 2) continue;
     if (!ci.getContentTypeConfig(parts[0])) continue;
+    const fileName = parts[parts.length - 1];
+    if (parts.length === 2 && isSharedTemplateBasename(fileName)) continue;
     const slugPart = parts[1];
     if (
       slugPart.startsWith("_") ||
@@ -102,7 +108,9 @@ export function classifyTouchedContentFiles(
     if (!slug || slug.startsWith("_")) continue;
     const contentType = ci.normalizeType(parts[0]);
     types.add(contentType);
-    htmlPaths.push(...collectEntryHtmlPaths(ci, contentType, slug));
+    htmlPaths.push(
+      ...collectEntryHtmlPaths(ci, contentType, slug, localeFromYamlFilename(fileName) ?? undefined),
+    );
   }
   return {
     contentTypes: [...types],
@@ -151,7 +159,7 @@ export function flushAfterContentWrites(opts: FlushAfterContentWritesOpts): void
   if (siteId && opts.htmlScope === "hot") {
     void import("./html-rebuild")
       .then(({ scheduleHotHtmlRebuild }) => {
-        scheduleHotHtmlRebuild("shared-template", contentRoot);
+        scheduleHotHtmlRebuild("hot", contentRoot);
       })
       .catch(() => {});
   } else if (siteId) {
@@ -214,10 +222,25 @@ export function fileMentionsRedirects(absOrRelPath: string): boolean {
   }
 }
 
-/**
- * Public pathnames for an entry (locale preferred, plus all alternates).
- * Used for path-scoped HTML cache bust — not shared-template fan-out.
- */
+/** Public URLs of entries that still use this content type's shared template. */
+export function collectAttachedHtmlPaths(
+  ci: ContentIndex,
+  contentType: string,
+): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const locale of getSupportedLocales()) {
+    for (const slug of listAttachedEntries(contentType, locale, ci.contentRoot)) {
+      for (const pagePath of collectEntryHtmlPaths(ci, contentType, slug, locale)) {
+        if (seen.has(pagePath)) continue;
+        seen.add(pagePath);
+        paths.push(pagePath);
+      }
+    }
+  }
+  return paths;
+}
+
 export function collectEntryHtmlPaths(
   ci: ContentIndex,
   contentType: string,
@@ -236,8 +259,11 @@ export function collectEntryHtmlPaths(
 
   try {
     const urls = ci.getAlternateUrls(slug, contentType);
-    if (locale && urls[locale]) add(urls[locale]);
-    for (const u of Object.values(urls)) add(u);
+    if (locale) {
+      if (urls[locale]) add(urls[locale]);
+    } else {
+      for (const u of Object.values(urls)) add(u);
+    }
   } catch {
     /* ignore */
   }

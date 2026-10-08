@@ -1862,6 +1862,7 @@ export class ContentIndex {
    * scanSlow (same as the file-watcher path). Pass `{ syncSlow: true }` when
    * redirects/index must be correct before the caller returns (GitHub pull,
    * rename-with-redirect, raw YAML save, explicit refresh-cache).
+   * Does not rebuild public HTML. Callers enqueue the pages that changed.
    */
   refresh(opts?: { syncSlow?: boolean }): void {
     const syncSlow = opts?.syncSlow === true;
@@ -1888,9 +1889,6 @@ export class ContentIndex {
       this.refreshRunning = false;
     }
     invalidateStaticListingCache(undefined, this.contentRoot);
-    void import("./html-rebuild")
-      .then(({ scheduleHotHtmlRebuild }) => scheduleHotHtmlRebuild("content-index-refresh", this.contentRoot))
-      .catch(() => {});
   }
 
   getStats(): { total: number; byType: Record<string, number> } {
