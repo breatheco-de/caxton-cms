@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
   buildHtmlCacheKey,
+  canonicalHtmlCachePath,
   collectParamPlaceholderNames,
   getCachedHtml,
   htmlLooksPersonalized,
@@ -8,6 +9,8 @@ import {
   resetHtmlPageCacheForTests,
   setCachedHtml,
   setHtmlBuildIdForTests,
+  isEditDocumentRequest,
+  htmlRenderSkipReason,
   shouldBypassHtmlCache,
   singleflight,
 } from "./html-page-cache";
@@ -49,21 +52,35 @@ describe("shouldBypassHtmlCache", () => {
     ).toBe(false);
   });
 
-  it("still bypasses edit=1 / edit_mode / __site", () => {
+  it("does not bypass edit urls, cookies, or the debug token", () => {
+    expect(isEditDocumentRequest("/en/x?edit=1")).toBe(true);
+    expect(isEditDocumentRequest("/en/x?edit_mode=true")).toBe(true);
+    expect(isEditDocumentRequest("/en/x?edit_mode=false")).toBe(false);
+    expect(isEditDocumentRequest("/en/x")).toBe(false);
     expect(
       shouldBypassHtmlCache({
         method: "GET",
         headers: emptyHeaders,
         originalUrl: "/en/x?edit=1",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldBypassHtmlCache({
         method: "GET",
-        headers: emptyHeaders,
-        originalUrl: "/en/x?edit_mode=true",
+        headers: { cookie: "4g_ctx=abc; session=1" },
+        originalUrl: "/en/x",
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      shouldBypassHtmlCache({
+        method: "GET",
+        headers: { get: (name: string) => (name === "x-debug-token" ? "tok" : undefined) },
+        originalUrl: "/en/x",
+      }),
+    ).toBe(false);
+  });
+
+  it("still bypasses __site and Authorization", () => {
     expect(
       shouldBypassHtmlCache({
         method: "GET",
@@ -71,6 +88,41 @@ describe("shouldBypassHtmlCache", () => {
         originalUrl: "/en/x?__site=example.com",
       }),
     ).toBe(true);
+    expect(
+      shouldBypassHtmlCache({
+        method: "GET",
+        headers: { authorization: "Bearer secret" },
+        originalUrl: "/en/x",
+      }),
+    ).toBe(true);
+  });
+
+  it("names why a fresh document is built", () => {
+    expect(htmlRenderSkipReason({
+      method: "GET",
+      headers: emptyHeaders,
+      originalUrl: "/en/blog/post?cache=false",
+    })).toBe("cache_false");
+    expect(htmlRenderSkipReason({
+      method: "GET",
+      headers: emptyHeaders,
+      originalUrl: "/en/x?__site=example.com",
+    })).toBe("other_site");
+    expect(htmlRenderSkipReason({
+      method: "GET",
+      headers: { authorization: "Bearer secret" },
+      originalUrl: "/en/x",
+    })).toBe("authorization");
+    expect(htmlRenderSkipReason({
+      method: "POST",
+      headers: emptyHeaders,
+      originalUrl: "/en/x",
+    })).toBe("not_read");
+    expect(htmlRenderSkipReason({
+      method: "GET",
+      headers: emptyHeaders,
+      originalUrl: "/en/x?edit=1",
+    })).toBeNull();
   });
 
   it("does not bypass plain anonymous GET", () => {
@@ -81,6 +133,47 @@ describe("shouldBypassHtmlCache", () => {
         originalUrl: "/en/blog/post",
       }),
     ).toBe(false);
+  });
+});
+
+describe("canonicalHtmlCachePath", () => {
+  const ci = {
+    resolveUrl(url: string) {
+      if (url === "/es/ubicacion/berlin-germany" || url === "/es/ubicacion/berlin-alemania") {
+        return { contentType: "location", slug: "berlin-germany", patternLocale: "es" };
+      }
+      if (url === "/es/blog/herramientas-ia/mcp-model-context-protocol") {
+        return { contentType: "blog", slug: "mcp-model-context-protocol", patternLocale: "es" };
+      }
+      if (url === "/en/programs/ai-fluency") return null;
+      return null;
+    },
+    getAlternateUrls(slug: string, contentType: string) {
+      if (contentType === "location" && slug === "berlin-germany") {
+        return { es: "/es/ubicacion/berlin-alemania", en: "/en/location/berlin-germany" };
+      }
+      if (contentType === "blog") {
+        return { es: "/es/blog/herramientas-ia/que-es-y-como-funciona-el-model-context-protocol" };
+      }
+      return {};
+    },
+  };
+
+  it("uses the locale slug url for the same entry", () => {
+    expect(canonicalHtmlCachePath("/es/ubicacion/berlin-germany", ci)).toBe(
+      "/es/ubicacion/berlin-alemania",
+    );
+    expect(canonicalHtmlCachePath("/es/ubicacion/berlin-alemania", ci)).toBe(
+      "/es/ubicacion/berlin-alemania",
+    );
+    expect(canonicalHtmlCachePath("/es/blog/herramientas-ia/mcp-model-context-protocol", ci)).toBe(
+      "/es/blog/herramientas-ia/que-es-y-como-funciona-el-model-context-protocol",
+    );
+  });
+
+  it("leaves a path that does not resolve", () => {
+    expect(canonicalHtmlCachePath("/en/programs/ai-fluency", ci)).toBe("/en/programs/ai-fluency");
+    expect(canonicalHtmlCachePath("/en/home", undefined)).toBe("/en/home");
   });
 });
 

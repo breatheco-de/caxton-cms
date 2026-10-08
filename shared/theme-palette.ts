@@ -182,6 +182,10 @@ function isGradientCss(value: string): boolean {
   );
 }
 
+function isFileImageCss(value: string): boolean {
+  return /url\s*\(/i.test(value);
+}
+
 function isSolidColorCss(value: string): boolean {
   return (
     value.startsWith("hsl(") ||
@@ -235,6 +239,43 @@ export function sectionBackgroundStyle(value: string | undefined): {
   backgroundImage?: string;
 } {
   return sectionBackgroundPaint(value);
+}
+
+function cssBackgroundString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+export type SectionCoverPaint = {
+  backgroundColor?: string;
+  backgroundImage?: string;
+};
+
+/**
+ * Fill to extend behind a transparent navbar.
+ * Solid colors and gradients lift. A file image (`url(...)`) stays on the section.
+ */
+export function sectionCoverPaint(paint: {
+  background?: unknown;
+  backgroundColor?: unknown;
+  backgroundImage?: unknown;
+}): SectionCoverPaint | undefined {
+  const backgroundImage = cssBackgroundString(paint.backgroundImage);
+  if (backgroundImage && backgroundImage !== "none" && isFileImageCss(backgroundImage)) return undefined;
+
+  const cover: SectionCoverPaint = {};
+  if (backgroundImage && backgroundImage !== "none") cover.backgroundImage = backgroundImage;
+  const backgroundColor = cssBackgroundString(paint.backgroundColor);
+  if (backgroundColor && backgroundColor !== "transparent") cover.backgroundColor = backgroundColor;
+  if (!cover.backgroundImage && !cover.backgroundColor) {
+    const shorthand = cssBackgroundString(paint.background)?.trim();
+    if (shorthand && shorthand !== "none" && shorthand !== "transparent" && shorthand !== "inherit") {
+      if (isFileImageCss(shorthand)) return undefined;
+      if (isGradientCss(shorthand)) cover.backgroundImage = shorthand;
+      else cover.backgroundColor = shorthand;
+    }
+  }
+  if (!cover.backgroundColor && !cover.backgroundImage) return undefined;
+  return cover;
 }
 
 /** `:root` / `.dark` blocks declaring `--theme-bg-<id>` for every background entry. */

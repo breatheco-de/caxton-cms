@@ -21,11 +21,25 @@ import { child as loggerChild } from "./logger";
 const log = loggerChild({ module: "render-hub-html" });
 
 let devViteRef: ViteDevServer | null = null;
-let prodSsrRender: ((url: string, payload: unknown) => Promise<string>) | null = null;
-let prodSsrLoaded = false;
+let prodSsrLoad: Promise<((url: string, payload: unknown) => Promise<string>) | null> | null = null;
 
 export function registerDevViteForHubRender(vite: ViteDevServer | null): void {
   devViteRef = vite;
+}
+
+async function loadProdSsrBundle(): Promise<
+  ((url: string, payload: unknown) => Promise<string>) | null
+> {
+  try {
+    const ssrBundlePath = path.resolve(import.meta.dirname, "server", "entry-server.js");
+    if (!fs.existsSync(ssrBundlePath)) return null;
+    const mod = await import(ssrBundlePath);
+    return typeof mod.render === "function" ? mod.render : null;
+  } catch (err) {
+    prodSsrLoad = null;
+    log.warn({ err }, "production SSR bundle load failed for hub render");
+    return null;
+  }
 }
 
 async function loadSsrRender(): Promise<
@@ -46,19 +60,8 @@ async function loadSsrRender(): Promise<
       log.warn({ err }, "dev SSR module load failed for hub render");
     }
   }
-  if (!prodSsrLoaded) {
-    prodSsrLoaded = true;
-    try {
-      const ssrBundlePath = path.resolve(import.meta.dirname, "server", "entry-server.js");
-      if (fs.existsSync(ssrBundlePath)) {
-        const mod = await import(ssrBundlePath);
-        prodSsrRender = mod.render;
-      }
-    } catch (err) {
-      log.warn({ err }, "production SSR bundle load failed for hub render");
-    }
-  }
-  return prodSsrRender;
+  if (!prodSsrLoad) prodSsrLoad = loadProdSsrBundle();
+  return prodSsrLoad;
 }
 
 function resolveIndexHtmlPath(): string | null {

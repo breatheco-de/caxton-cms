@@ -100,6 +100,50 @@ function diskPathForKey(key: string): string {
   return path.join(cacheRootDir(), buildId, `${hash}.json`);
 }
 
+export type HtmlCachePathIndex = {
+  resolveUrl(url: string): {
+    contentType: string;
+    slug: string;
+    patternLocale?: string;
+  } | null;
+  getAlternateUrls(slug: string, contentType: string): Record<string, string>;
+};
+
+/**
+ * Cache key path for a public request. Folder names and per-locale slugs can
+ * both resolve the same entry; the stored copy is the locale's public URL
+ * (the one in the sitemap). Unknown paths stay as requested.
+ */
+export function canonicalHtmlCachePath(
+  pathname: string,
+  ci: HtmlCachePathIndex | null | undefined,
+): string {
+  const clean = pathname.split("?")[0].split("#")[0] || "/";
+  if (!ci) return clean;
+  let resolved: ReturnType<HtmlCachePathIndex["resolveUrl"]>;
+  try {
+    resolved = ci.resolveUrl(clean);
+  } catch {
+    return clean;
+  }
+  if (!resolved) return clean;
+  const locale =
+    resolved.patternLocale && resolved.patternLocale !== "default"
+      ? resolved.patternLocale
+      : clean === "/es" || clean.startsWith("/es/")
+        ? "es"
+        : "en";
+  let urls: Record<string, string>;
+  try {
+    urls = ci.getAlternateUrls(resolved.slug, resolved.contentType) || {};
+  } catch {
+    return clean;
+  }
+  const canonical = urls[locale];
+  if (!canonical || !canonical.startsWith("/")) return clean;
+  return canonical.split("?")[0].split("#")[0] || clean;
+}
+
 export function buildHtmlCacheKey(
   siteId: string,
   pathname: string,
@@ -201,6 +245,12 @@ export function getCachedHtml(key: string): CachedHtmlPage | null {
     entry.pendingSince > 0 &&
     nowFn() - entry.pendingSince >= HTML_REBUILD_TOO_SLOW_MS
   ) {
+    const parsed = parseHtmlCacheKey(key);
+    const pathname = parsed?.pathname ?? key;
+    log.warn(
+      { pathname, variantKey: parsed?.variantKey, siteId: parsed?.siteId },
+      `HTML cache dropped ${pathname}: rebuild still pending after 8s`,
+    );
     dropKey(key);
     return null;
   }
@@ -487,64 +537,60 @@ export async function singleflight<T>(key: string, fn: () => Promise<T>): Promis
   return promise;
 }
 
-/** Skip caching personalized / editor / authenticated document requests. */
-export function shouldBypassHtmlCache(req: {
+/**
+ * Edit URLs are not the public document. The editor shows hidden sections and
+ * leaves variables unsubstituted, so the stored copy must not be served or
+ * rendered. The catch-all sends the same empty client shell as /private/preview.
+ */
+export function isEditDocumentRequest(url: string | undefined): boolean {
+  const raw = url || "";
+  const withoutHash = raw.split("#")[0] || "";
+  const query = withoutHash.includes("?") ? withoutHash.slice(withoutHash.indexOf("?") + 1) : "";
+  if (!query) return false;
+  const params = new URLSearchParams(query);
+  return params.get("edit") === "1" || params.get("edit_mode") === "true";
+}
+
+export type HtmlRenderSkipReason = "not_read" | "cache_false" | "other_site" | "authorization";
+
+type HtmlCacheRequest = {
   method?: string;
   headers: Record<string, unknown> | { get?(name: string): string | undefined; cookie?: string; authorization?: string };
   originalUrl?: string;
   url?: string;
-}): boolean {
+};
+
+/**
+ * Why this request must build a fresh public document instead of reading the stored copy.
+ * Edit URLs are not a reason: they use the client shell and never render.
+ * Null means the stored copy may be served.
+ */
+export function htmlRenderSkipReason(req: HtmlCacheRequest): HtmlRenderSkipReason | null {
   const method = (req.method || "GET").toUpperCase();
-  if (method !== "GET" && method !== "HEAD") return true;
+  if (method !== "GET" && method !== "HEAD") return "not_read";
 
   const url = req.originalUrl || req.url || "";
-  // Prefer ?cache=false for anonymous fresh HTML (no edit-mode side effects).
-  // edit=1 / edit_mode= / __site= also bypass (legacy / editor / multi-site).
-  if (
-    /[?&]cache=false(?:&|#|$)/i.test(url) ||
-    url.includes("edit_mode=") ||
-    url.includes("edit=1") ||
-    url.includes("__site=")
-  ) {
-    return true;
-  }
+  if (/[?&]cache=false(?:&|#|$)/i.test(url)) return "cache_false";
+  if (url.includes("__site=")) return "other_site";
 
   const headers = req.headers as {
     get?(name: string): string | undefined;
-    cookie?: string | string[];
     authorization?: string | string[];
   };
-
-  const cookieRaw =
-    typeof headers.get === "function"
-      ? headers.get("cookie")
-      : Array.isArray(headers.cookie)
-        ? headers.cookie.join("; ")
-        : headers.cookie;
-  const cookie = typeof cookieRaw === "string" ? cookieRaw : "";
-  if (
-    cookie &&
-    (/debug[_-]?token/i.test(cookie) ||
-      /session/i.test(cookie) ||
-      /auth/i.test(cookie) ||
-      /edit[_-]?mode/i.test(cookie))
-  ) {
-    return true;
-  }
-
   const authRaw =
     typeof headers.get === "function"
       ? headers.get("authorization")
       : Array.isArray(headers.authorization)
         ? headers.authorization[0]
         : headers.authorization;
-  if (authRaw) return true;
+  if (authRaw) return "authorization";
 
-  const debugToken =
-    typeof headers.get === "function" ? headers.get("x-debug-token") : undefined;
-  if (debugToken) return true;
+  return null;
+}
 
-  return false;
+/** Skip the stored copy and render a fresh public document. Edit URLs are not included: they use the client shell. */
+export function shouldBypassHtmlCache(req: HtmlCacheRequest): boolean {
+  return htmlRenderSkipReason(req) != null;
 }
 
 const QUERY_PARAM_ALLOW = new Set([

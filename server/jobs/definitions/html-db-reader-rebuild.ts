@@ -1,13 +1,9 @@
-import path from "path";
 import { Job } from "sidequest";
-import { ContentIndex } from "../../content-index";
-import { DatabaseManager } from "../../database";
-import { MediaGallery } from "../../media-gallery";
 import { getDatabaseUsage } from "../../database-usage";
 import { renderHubHtml } from "../../render-hub-html";
 import { buildHtmlCacheKey, getHtmlBuildId, notifyHtmlCacheAdopted } from "../../html-page-cache";
+import { buildHtmlRebuildSite } from "../../html-rebuild";
 import { pageReadsDatabase } from "../../content-type-usage";
-import type { SiteContext } from "../../site-manager";
 import { child } from "../../logger";
 import { markJobFinished, markJobStarted } from "../heartbeat";
 
@@ -46,21 +42,9 @@ export class HtmlDbReaderRebuildJob extends Job {
       if (payload.buildId && payload.buildId !== getHtmlBuildId()) {
         return { ok: true, rebuilt: 0 };
       }
-      const contentRoot = path.resolve(payload.contentRoot);
-      const contentRootName =
-        path.relative(process.cwd(), contentRoot) || path.basename(contentRoot);
-      const mg = new MediaGallery(contentRootName);
-      const database = new DatabaseManager(contentRoot, mg);
-      const ci = new ContentIndex(contentRoot, database);
-      ci.scanFast();
-      const usage = getDatabaseUsage(payload.dbName, { contentRoot, db: database });
-      const site = {
-        contentRoot,
-        contentRootName: payload.siteId || contentRootName,
-        domain: contentRootName,
-        contentIndex: ci,
-        database,
-      } as SiteContext;
+      const site = buildHtmlRebuildSite(payload.contentRoot, payload.siteId);
+      const ci = site.contentIndex;
+      const usage = getDatabaseUsage(payload.dbName, { contentRoot: site.contentRoot, db: site.database });
 
       const adopted: string[] = [];
       const seen = new Set<string>();

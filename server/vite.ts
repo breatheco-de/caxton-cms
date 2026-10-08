@@ -39,17 +39,20 @@ import { getEntryAssets, buildEntryPreloadTags, buildEntryLinkHeader } from "./u
 import { assembleSsrDocument, isMeaningfulSsrAppHtml } from "./utils/ssr-html";
 import {
   buildHtmlCacheKey,
+  canonicalHtmlCachePath,
   getCachedHtml,
   htmlDocumentCacheControl,
   logHtmlRender,
   setCachedHtml,
+  htmlRenderSkipReason,
+  isEditDocumentRequest,
   shouldBypassHtmlCache,
   singleflight,
 } from "./html-page-cache";
 import { buildAnonymousPageHtml } from "./render-hub-html";
 import { injectGtmWebContainerId } from "./gtm-web-inject";
 import { child as loggerChild } from "./logger";
-import { notePage, pageRouteForPath } from "./process-stats";
+import { notePage, pagePatternForStats } from "./process-stats";
 import { recordPublicNotFound } from "./runtime-issues-store";
 
 function maybeRecordPublicNotFound(req: Request, res: Response, status: number): void {
@@ -389,11 +392,14 @@ export function serveStatic(app: Express) {
     const url = _req.originalUrl;
     const tHtml = Date.now();
     let pageOutcome = "client_fallback";
+    let recordPage = true;
 
     const ssrSchemaHtml = _req.ssrSchemaHtml;
 
     const cleanUrlForSsr = url.split("?")[0].split("#")[0];
     const skipPrivate = cleanUrlForSsr.startsWith("/private/");
+    // Edit markup is not the public page. Same empty shell as /private/preview.
+    const clientShellOnly = skipPrivate || isEditDocumentRequest(url);
 
     const site = (res.locals as any).site;
     const siteId =
@@ -401,11 +407,17 @@ export function serveStatic(app: Express) {
       site?.contentRoot ||
       site?.domain ||
       "default";
-    const bypassCache = skipPrivate || shouldBypassHtmlCache(_req);
+    const bypassCache = clientShellOnly || shouldBypassHtmlCache(_req);
+    const cachePath = canonicalHtmlCachePath(cleanUrlForSsr, site?.contentIndex);
+    const renderUrl =
+      cachePath === cleanUrlForSsr
+        ? url
+        : `${cachePath}${url.includes("?") ? url.slice(url.indexOf("?")) : ""}`;
     res.on("finish", () => {
+      if (!recordPage) return;
       try {
         notePage(
-          pageRouteForPath(cleanUrlForSsr, site?.contentRoot),
+          pagePatternForStats(cleanUrlForSsr, site?.contentRoot),
           cleanUrlForSsr,
           Date.now() - tHtml,
           res.statusCode,
@@ -429,14 +441,14 @@ export function serveStatic(app: Express) {
       }
       const cacheKey = buildHtmlCacheKey(
         siteId,
-        cleanUrlForSsr,
+        cachePath,
         (res.locals as any).htmlVariantKey || "live",
       );
 
-      // Private admin UI: client shell only (existing).
+      // Private admin UI and ?edit=1: client shell only.
       // Non-200 public URLs: skip SSR (matches renderHubHtml) — avoids empty-#root
       // retries for /landing/null and other unknown paths.
-      if (!skipPrivate && !shouldSkipPublicSsr(status)) {
+      if (!clientShellOnly && !shouldSkipPublicSsr(status)) {
         const renderStarted = performance.now();
         const built = await singleflight(cacheKey, async () => {
           if (!bypassCache) {
@@ -445,7 +457,7 @@ export function serveStatic(app: Express) {
               return { kind: "html" as const, html: shared.html, status: shared.status, fromCache: true };
             }
           }
-          const initialDataPayload = await getInitialDataForRequest(url, res);
+          const initialDataPayload = await getInitialDataForRequest(renderUrl, res);
           const nextStatus = resolvePublicHtmlStatus({
             url,
             httpStatus:
@@ -465,7 +477,7 @@ export function serveStatic(app: Express) {
             render,
             indexHtml,
             initialData: initialDataPayload,
-            url,
+            url: renderUrl,
             contentRoot: (res.locals as any).site?.contentRoot,
             ssrSchemaHtml,
           });
@@ -499,7 +511,27 @@ export function serveStatic(app: Express) {
             ms: renderMs,
             cache: built.fromCache ? "HIT" : "MISS",
           });
-          pageOutcome = "ssr_ok";
+          if (built.fromCache) {
+            recordPage = false;
+          } else {
+            const skip = htmlRenderSkipReason(_req);
+            pageOutcome = skip
+              ? `ssr_ok_${skip}`
+              : urlBakesStoredPageQuery(url, (res.locals as any).site?.contentIndex)
+                ? "ssr_ok_baked_query"
+                : "ssr_ok";
+            if (pageOutcome === "ssr_ok") {
+              const variantKey = (res.locals as any).htmlVariantKey || "live";
+              const reason =
+                variantKey !== "live" && variantKey !== "default"
+                  ? `variant ${variantKey}`
+                  : "no stored copy";
+              ssrLogger.warn(
+                { url: cleanUrlForSsr, variantKey },
+                `HTML cache miss ${cleanUrlForSsr}: ${reason}`,
+              );
+            }
+          }
           maybeRecordPublicNotFound(_req, res, status);
           res
             .status(status)
@@ -511,7 +543,7 @@ export function serveStatic(app: Express) {
             .send(built.html);
           return;
         }
-      } else if (!skipPrivate && shouldSkipPublicSsr(status)) {
+      } else if (!clientShellOnly && shouldSkipPublicSsr(status)) {
         pageOutcome = "ssr_skipped_non_200";
       }
     } catch (e) {

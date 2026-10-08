@@ -285,7 +285,7 @@ type MarkdownPlugins = { katex: boolean; shiki: boolean };
 
 const processors = new Map<string, ReturnType<typeof buildProcessor>>();
 
-function markdownPluginFlags(markdown: string): MarkdownPlugins {
+export function markdownPluginFlags(markdown: string): MarkdownPlugins {
   const katex =
     markdown.includes("\\(") || markdown.includes("\\[") || markdown.includes("$$");
   const shiki = markdown.includes("```") || markdown.includes("~~~");

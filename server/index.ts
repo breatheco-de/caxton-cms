@@ -483,7 +483,9 @@ app.use((req, res, next) => {
   if (app.get("env") !== "development") {
     const {
       buildHtmlCacheKey,
+      canonicalHtmlCachePath,
       getCachedHtml,
+      isEditDocumentRequest,
       shouldBypassHtmlCache,
       htmlDocumentCacheControl,
       logHtmlRender,
@@ -504,7 +506,7 @@ app.use((req, res, next) => {
       ) {
         return next();
       }
-      if (shouldBypassHtmlCache(req)) return next();
+      if (shouldBypassHtmlCache(req) || isEditDocumentRequest(req.originalUrl || req.url)) return next();
 
       const site = (res.locals as any).site;
       const siteId =
@@ -514,7 +516,8 @@ app.use((req, res, next) => {
         .split("#")[0];
       const variantKey = resolveHtmlVariantKey(req, res);
       (res.locals as any).htmlVariantKey = variantKey;
-      const cacheKey = buildHtmlCacheKey(siteId, cleanUrl, variantKey);
+      const cachePath = canonicalHtmlCachePath(cleanUrl, site?.contentIndex);
+      const cacheKey = buildHtmlCacheKey(siteId, cachePath, variantKey);
       const started = performance.now();
       const cached = getCachedHtml(cacheKey);
       if (!cached) return next();

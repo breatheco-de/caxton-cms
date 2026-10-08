@@ -1,11 +1,7 @@
-import path from "path";
 import { Job } from "sidequest";
-import { ContentIndex } from "../../content-index";
-import { DatabaseManager } from "../../database";
-import { MediaGallery } from "../../media-gallery";
 import { renderHubHtml } from "../../render-hub-html";
 import { buildHtmlCacheKey, getHtmlBuildId, notifyHtmlCacheAdopted } from "../../html-page-cache";
-import type { SiteContext } from "../../site-manager";
+import { buildHtmlRebuildSite } from "../../html-rebuild";
 import { child } from "../../logger";
 import { markJobFinished, markJobStarted } from "../heartbeat";
 
@@ -30,20 +26,7 @@ export class HtmlPageRebuildJob extends Job {
       if (payload.buildId && payload.buildId !== getHtmlBuildId()) {
         return { ok: true, reason: "stale_build" };
       }
-      const contentRoot = path.resolve(payload.contentRoot);
-      const contentRootName =
-        path.relative(process.cwd(), contentRoot) || path.basename(contentRoot);
-      const mg = new MediaGallery(contentRootName);
-      const database = new DatabaseManager(contentRoot, mg);
-      const ci = new ContentIndex(contentRoot, database);
-      ci.scanFast();
-      const site = {
-        contentRoot,
-        contentRootName: payload.siteId || contentRootName,
-        domain: contentRootName,
-        contentIndex: ci,
-        database,
-      } as SiteContext;
+      const site = buildHtmlRebuildSite(payload.contentRoot, payload.siteId);
       const rendered = await renderHubHtml({
         site,
         pathname: payload.pathname,
