@@ -46,6 +46,9 @@ async function runPrebuild(): Promise<void> {
   const { buildHtmlRebuildSite } = await import("../server/html-rebuild");
   const { getSitemapUrls, toActiveSiteCtx } = await import("../server/sitemap");
   const { getHtmlBuildId } = await import("../server/html-page-cache");
+  const { resolveLocaleHomeAliasTarget } = await import("../server/locale-home-alias");
+  const { createPublicUrlResolver } = await import("../server/redirects");
+  const { normalizePublicPath } = await import("../shared/public-app-routes");
   const { markdownPluginFlags } = await import("../server/markdown-enhance");
   const { child } = await import("../server/logger");
 
@@ -99,14 +102,28 @@ async function runPrebuild(): Promise<void> {
   const runtimes = new Map<string, ReturnType<typeof buildHtmlRebuildSite>>();
   const jobs: PageJob[] = [];
 
+  let redirected = 0;
+
   for (const site of sites) {
     const runtime = buildHtmlRebuildSite(site.contentFolder, site.contentFolder);
     runtimes.set(site.contentFolder, runtime);
+    const redirects = createPublicUrlResolver(runtime.contentIndex, { freshRedirects: true });
     const seen = new Set<string>();
-    for (const row of getSitemapUrls(toActiveSiteCtx(runtime))) {
+    for (const row of getSitemapUrls(toActiveSiteCtx(runtime), true)) {
       const pathname = pathnameFromSitemapLoc(row.loc);
       if (!pathname || seen.has(pathname)) continue;
       seen.add(pathname);
+      const alias = resolveLocaleHomeAliasTarget(pathname, runtime.contentIndex, runtime.contentRoot);
+      const redirectHit = redirects.test(pathname);
+      const mapped =
+        redirectHit.match
+          ? redirectHit.resolvedTo || (typeof redirectHit.to === "string" ? redirectHit.to : "")
+          : "";
+      const redirectTo = alias || mapped;
+      if (redirectTo && normalizePublicPath(redirectTo) !== normalizePublicPath(pathname)) {
+        redirected += 1;
+        continue;
+      }
       jobs.push({
         siteId: site.contentFolder,
         pathname,
@@ -147,7 +164,9 @@ async function runPrebuild(): Promise<void> {
 
   await runPool(jobs);
 
-  console.log(`[prebuild-html] done wrote ${wrote} skipped ${skipped} failed ${failed}`);
+  console.log(
+    `[prebuild-html] done wrote ${wrote} skipped ${skipped} failed ${failed} redirected ${redirected}`,
+  );
   if (wrote === 0 && jobs.length > 0) {
     console.error("[prebuild-html] no page was stored");
     process.exit(1);
