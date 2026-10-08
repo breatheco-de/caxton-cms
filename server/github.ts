@@ -28,7 +28,6 @@ import {
 } from './sync-state';
 import { child } from "./logger";
 import type { ContentIndex } from "./content-index";
-import { collectAttachedHtmlPaths } from "./content-write-flush";
 import { isSharedTemplateBasename } from "./shared-layout-paths";
 import { getDefaultContentFolder, getDefaultContentRoot } from "./site-config";
 import {
@@ -39,11 +38,16 @@ import {
 } from "./component-registry-persistent";
 const log = child({ module: "github" });
 
-/** Public URLs of entries that still use a shared template present in a pull. */
-function publicPathsForPulledSharedTemplates(
+/**
+ * Public URLs of entries that still use a shared template present in a pull.
+ * Imported after the pull: content-write-flush loads site Zod schemas, and those
+ * files are not on disk yet when content:pull starts on a fresh release.
+ */
+async function publicPathsForPulledSharedTemplates(
   ci: ContentIndex,
   files: string[],
-): { htmlPaths: string[]; contentTypes: string[] } {
+): Promise<{ htmlPaths: string[]; contentTypes: string[] }> {
+  const { collectAttachedHtmlPaths } = await import("./content-write-flush");
   const rootName = path.basename(ci.contentRoot);
   const types = new Set<string>();
   const htmlPaths: string[] = [];
@@ -1391,7 +1395,7 @@ export async function reconcileSyncStateOnStartup(opts?: { repoUrl?: string; con
         );
         if (siteCtx?.contentIndex) {
           const { flushAfterContentWrites } = await import("./content-write-flush");
-          const spread = publicPathsForPulledSharedTemplates(siteCtx.contentIndex, files);
+          const spread = await publicPathsForPulledSharedTemplates(siteCtx.contentIndex, files);
           flushAfterContentWrites({
             ci: siteCtx.contentIndex,
             contentTypes: spread.contentTypes,
@@ -3123,7 +3127,7 @@ async function refreshContentAfterBootstrapPull(
     );
     if (siteCtx?.contentIndex) {
       const { flushAfterContentWrites } = await import("./content-write-flush");
-      const spread = publicPathsForPulledSharedTemplates(siteCtx.contentIndex, files);
+      const spread = await publicPathsForPulledSharedTemplates(siteCtx.contentIndex, files);
       flushAfterContentWrites({
         ci: siteCtx.contentIndex,
         contentTypes: spread.contentTypes,
