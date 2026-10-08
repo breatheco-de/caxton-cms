@@ -520,6 +520,17 @@ export function serveStatic(app: Express) {
               : urlBakesStoredPageQuery(url, (res.locals as any).site?.contentIndex)
                 ? "ssr_ok_baked_query"
                 : "ssr_ok";
+            if (pageOutcome === "ssr_ok") {
+              const variantKey = (res.locals as any).htmlVariantKey || "live";
+              const reason =
+                variantKey !== "live" && variantKey !== "default"
+                  ? `variant ${variantKey}`
+                  : "no stored copy";
+              ssrLogger.warn(
+                { url: cleanUrlForSsr, variantKey },
+                `HTML cache miss ${cleanUrlForSsr}: ${reason}`,
+              );
+            }
           }
           maybeRecordPublicNotFound(_req, res, status);
           res

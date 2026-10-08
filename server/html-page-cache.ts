@@ -245,6 +245,12 @@ export function getCachedHtml(key: string): CachedHtmlPage | null {
     entry.pendingSince > 0 &&
     nowFn() - entry.pendingSince >= HTML_REBUILD_TOO_SLOW_MS
   ) {
+    const parsed = parseHtmlCacheKey(key);
+    const pathname = parsed?.pathname ?? key;
+    log.warn(
+      { pathname, variantKey: parsed?.variantKey, siteId: parsed?.siteId },
+      `HTML cache dropped ${pathname}: rebuild still pending after 8s`,
+    );
     dropKey(key);
     return null;
   }

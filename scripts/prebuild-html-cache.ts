@@ -73,6 +73,10 @@ async function runPrebuild(): Promise<void> {
           const runtime = runtimes.get(job.siteId);
           if (!runtime) {
             skipped += 1;
+            log.warn(
+              { pathname: job.pathname, siteId: job.siteId },
+              `prebuild skipped ${job.pathname}: no runtime`,
+            );
             continue;
           }
           const rendered = await renderHubHtml({
@@ -83,6 +87,11 @@ async function runPrebuild(): Promise<void> {
           });
           if (!rendered || rendered.status !== 200) {
             skipped += 1;
+            const reason = !rendered ? "empty body" : `status ${rendered.status}`;
+            log.warn(
+              { pathname: job.pathname, siteId: job.siteId, status: rendered?.status },
+              `prebuild skipped ${job.pathname}: ${reason}`,
+            );
             continue;
           }
           wrote += 1;

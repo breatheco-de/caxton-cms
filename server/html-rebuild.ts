@@ -103,6 +103,10 @@ export async function enqueueHtmlRebuild(
   } catch (err) {
     log.warn({ err, key }, "html rebuild enqueue failed");
   }
+  log.warn(
+    { pathname: target.pathname, variantKey: target.variantKey, siteId: target.siteId },
+    `HTML cache dropped ${target.pathname}: rebuild job did not queue`,
+  );
   invalidateHtmlPageCacheKey(key);
   return false;
 }
