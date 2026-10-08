@@ -455,7 +455,7 @@ export default function PartnershipCarouselSplitCard({
       onMouseEnter={handlePause}
       onMouseLeave={handleResume}
     >
-      <div className="max-w-7xl mx-auto px-4 md:px-8 py-12 md:py-16">
+      <div className="max-w-7xl mx-auto px-4 md:px-8">
         {(heading || subtitle) && (
           <div className="text-center mb-10">
             {heading && (

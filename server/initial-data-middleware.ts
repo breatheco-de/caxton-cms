@@ -42,8 +42,9 @@ import {
 } from "./image-registry-subset";
 import { resolveEffectiveCanonical } from "./resolve-effective-canonical";
 import { isLocaleHomeAlias } from "@shared/public-app-routes";
-import { buildThemeBackgroundCss, type ThemePaint, type ThemePalettes } from "@shared/theme-palette";
+import { isSiteThemedPath, type ThemePaint } from "@shared/theme-palette";
 import { loadSiteTheme } from "./theme-config";
+import { injectThemeOverrides } from "./theme-html";
 
 const DEFAULT_SRCSET_SIZES =
   "(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw";
@@ -977,32 +978,23 @@ function themePaintFor(contentRoot: string): ThemePaint | undefined {
   return { light, backgrounds };
 }
 
-function buildThemeCssOverrides(contentRoot = getDefaultContentRoot()): string {
-  try {
-    const themePath = path.join(contentRoot, "theme.json");
-    if (!fs.existsSync(themePath)) return "";
-    const theme = JSON.parse(fs.readFileSync(themePath, "utf-8")) as ThemePalettes & {
-      colors?: { light?: Record<string, string>; dark?: Record<string, string> };
-    };
-    const colors = theme.colors ?? {};
-    let css = "";
-    if (colors.light && Object.keys(colors.light).length > 0) {
-      const vars = Object.entries(colors.light)
-        .map(([k, v]) => `  ${k}: ${v};`)
-        .join("\n");
-      css += `:root {\n${vars}\n}\n`;
+/** Page-rendering private routes (preview, demos): theme style only, no initial data. */
+function themeOnlyHtmlHook(res: Response, contentRoot: string): void {
+  const originalEnd = res.end;
+  res.end = function (this: Response, chunk?: any, ...args: any[]) {
+    const contentType = res.getHeader("content-type");
+    if (contentType && String(contentType).includes("text/html") && chunk) {
+      try {
+        const html = typeof chunk === "string" ? chunk : chunk.toString("utf-8");
+        const injected = injectThemeOverrides(html, contentRoot);
+        if (injected !== html) res.setHeader("content-length", Buffer.byteLength(injected, "utf-8"));
+        return originalEnd.call(this, injected, ...args);
+      } catch {
+        return originalEnd.call(this, chunk, ...args);
+      }
     }
-    if (colors.dark && Object.keys(colors.dark).length > 0) {
-      const vars = Object.entries(colors.dark)
-        .map(([k, v]) => `  ${k}: ${v};`)
-        .join("\n");
-      css += `.dark {\n${vars}\n}\n`;
-    }
-    css += buildThemeBackgroundCss(theme);
-    return css ? `<style id="__theme_overrides__">\n${css}</style>` : "";
-  } catch {
-    return "";
-  }
+    return originalEnd.call(this, chunk, ...args);
+  } as any;
 }
 
 export function initialDataMiddleware(
@@ -1010,7 +1002,14 @@ export function initialDataMiddleware(
   res: Response,
   next: NextFunction,
 ) {
-  if (req.path.startsWith("/api/") || req.path.startsWith("/private/")) {
+  if (req.path.startsWith("/api/")) {
+    return next();
+  }
+  if (req.path === "/private" || req.path.startsWith("/private/")) {
+    if (isSiteThemedPath(req.path)) {
+      const site = (res.locals as any).site as SiteContext | undefined;
+      themeOnlyHtmlHook(res, site?.contentRoot ?? getDefaultContentRoot());
+    }
     return next();
   }
 
@@ -1070,11 +1069,8 @@ export function initialDataMiddleware(
 
             if (payload) {
               injected = insertBefore(injected, "</body>", buildInitialDataScriptTag(payload));
-              const themeStyle = buildThemeCssOverrides(ci.contentRoot);
-              if (themeStyle && !injected.includes('id="__theme_overrides__"')) {
-                injected = insertBefore(injected, "</head>", themeStyle);
-              }
             }
+            injected = injectThemeOverrides(injected, ci.contentRoot);
             injected = applyEntryModulePreload(injected);
 
             const newLength = Buffer.byteLength(injected, "utf-8");

@@ -15,7 +15,7 @@ export default function FeaturesGridStatsText({ data }: FeaturesGridStatsTextPro
 
   return (
     <section 
-      className={`py-12 ${data.background || 'bg-primary/5'}`}
+      className={data.background || 'bg-primary/5'}
       data-testid="section-features-grid-stats-text"
     >
       <div className="max-w-6xl mx-auto px-4">

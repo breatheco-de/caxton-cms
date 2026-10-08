@@ -1,7 +1,9 @@
 name: "Article with Side Table of Contents"
 description: "Long-form article with a sticky sidebar table of contents that highlights the active heading as you scroll"
 yaml: |
-  - type: article
+  - paddingY:
+      desktop: md
+    type: article
     show_toc: true
     toc_position: side
     content: |

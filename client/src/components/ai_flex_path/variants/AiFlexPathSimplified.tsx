@@ -440,7 +440,7 @@ export default function AiFlexPathSimplified({ data }: { data: AiFlexPathSimplif
   const hasSectionMedia = Boolean(data.image_id || SectionIcon);
 
   return (
-    <div className="pb-16" style={{ fontFamily: "'Inter Variable',system-ui,-apple-system,sans-serif" }}>
+    <div style={{ fontFamily: "'Inter Variable',system-ui,-apple-system,sans-serif" }}>
       <div className="mx-auto">
         <div className="flex">
           <div className="hidden md:flex w-16 lg:w-28 flex-shrink-0 items-start justify-center pt-[2px]">

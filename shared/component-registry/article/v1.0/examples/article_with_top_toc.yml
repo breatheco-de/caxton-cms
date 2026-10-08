@@ -1,7 +1,9 @@
 name: "Article with Top Table of Contents"
 description: "Article with the table of contents rendered at the top, useful for shorter articles or when sidebar space is limited"
 yaml: |
-  - type: article
+  - paddingY:
+      desktop: md
+    type: article
     show_toc: true
     toc_position: top
     content: |

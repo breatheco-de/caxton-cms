@@ -27,7 +27,7 @@ export default function NumberedStepsVerticalCards({ data }: NumberedStepsVertic
 
   return (
     <section
-      className={`py-16 ${data.background || "bg-muted/30"}`}
+      className={data.background || "bg-muted/30"}
       data-testid="section-numbered-steps-vertical-cards"
     >
       <div className="max-w-4xl mx-auto px-4">

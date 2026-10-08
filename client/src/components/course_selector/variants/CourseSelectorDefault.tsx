@@ -219,7 +219,7 @@ export default function CourseSelectorDefault({ data }: CourseSelectorDefaultPro
 
   return (
     <section
-      className="w-full py-12 md:py-16"
+      className="w-full"
       data-testid="section-course-selector"
     >
       <div className="max-w-6xl mx-auto px-4 md:px-8">

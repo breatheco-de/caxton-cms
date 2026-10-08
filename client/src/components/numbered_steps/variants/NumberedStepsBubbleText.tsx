@@ -57,7 +57,7 @@ export default function NumberedStepsBubbleText({ data }: NumberedStepsBubbleTex
 
   return (
     <section
-      className={`py-16 ${data.background || "bg-muted/30"}`}
+      className={data.background || "bg-muted/30"}
       data-testid="section-numbered-steps-bubble-text"
     >
       <div className="max-w-6xl mx-auto px-4">

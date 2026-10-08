@@ -351,7 +351,7 @@ export default function AiFlexSelectorDefault({ data }: { data: AiFlexSelectorDe
   const RobotIcon = data.icon ? getIcon(data.icon) : null;
 
   return (
-    <div className="min-h-screen py-12 px-4 pb-16" style={{ fontFamily: "'Inter',system-ui,-apple-system,sans-serif" }}>
+    <div className="min-h-[calc(100vh-7rem)] px-4" style={{ fontFamily: "'Inter',system-ui,-apple-system,sans-serif" }}>
       <div className="mx-auto">
 
         {/* Badge */}

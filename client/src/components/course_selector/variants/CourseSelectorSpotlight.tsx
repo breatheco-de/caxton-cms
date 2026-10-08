@@ -365,7 +365,7 @@ export default function CourseSelectorSpotlight({ data }: CourseSelectorSpotligh
 
   return (
     <section
-      className="w-full py-12 md:py-16"
+      className="w-full"
       data-testid="section-course-selector-spotlight"
     >
       <div className="max-w-6xl mx-auto px-4 md:px-8">

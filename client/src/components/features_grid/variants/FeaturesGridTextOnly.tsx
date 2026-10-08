@@ -43,7 +43,7 @@ export default function FeaturesGridTextOnly({ data }: FeaturesGridTextOnlyProps
 
   return (
     <section 
-      className={`py-14 ${data.background || ''}`}
+      className={data.background || ''}
       data-testid="section-features-grid"
     >
       <div className="max-w-6xl mx-auto px-4">

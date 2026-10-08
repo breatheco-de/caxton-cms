@@ -1,4 +1,5 @@
 import fs from "fs";
+import { injectThemeOverrides } from "./theme-html";
 import path from "path";
 import type { ViteDevServer } from "vite";
 import type { ContentIndex } from "./content-index";
@@ -136,6 +137,7 @@ export async function buildAnonymousPageHtml(opts: {
   html = applyEntryModulePreload(html);
   html = injectEntryPreloadTags(html);
   html = injectGtmWebContainerId(html, opts.contentRoot);
+  if (opts.contentRoot) html = injectThemeOverrides(html, opts.contentRoot);
   if (!contentTypesReadyForHtmlCache(opts.initialData)) {
     log.warn({ url: opts.url }, "content type list missing; not storing this HTML copy");
     return { html, skipCacheWrite: true };

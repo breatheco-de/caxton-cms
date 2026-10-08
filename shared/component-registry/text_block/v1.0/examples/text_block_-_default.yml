@@ -1,6 +1,9 @@
 name: text_block - default
 yaml: |
-  - type: text_block
+  - paddingY:
+      mobile: 48px
+      desktop: lg
+    type: text_block
     version: "1.0"
     eyebrow: Our Mission
     heading: Empowering the Next Generation of AI Professionals

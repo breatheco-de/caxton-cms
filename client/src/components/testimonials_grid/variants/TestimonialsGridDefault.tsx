@@ -141,7 +141,6 @@ export function TestimonialsGrid({ data }: TestimonialsGridProps) {
 
   return (
     <section
-      className="py-12 md:py-16"
       style={bgStyle}
       data-testid="section-testimonials-grid"
     >

@@ -39,7 +39,7 @@ export function GeekchartDefault({ data }: GeekchartSectionProps) {
   return (
     <div
       ref={rootRef}
-      className="w-full px-4 py-8 md:px-6 lg:px-8"
+      className="w-full px-4 md:px-6 lg:px-8"
       data-testid="section-geekchart"
     >
       <figure className={wide ? "geekchart mx-auto max-w-5xl" : "geekchart mx-auto max-w-3xl"}>

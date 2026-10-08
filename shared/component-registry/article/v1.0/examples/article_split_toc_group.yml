@@ -4,7 +4,9 @@ description: >
   show_toc on the first controls the shared TOC; reading time and mobile TOC
   appear only on the first; desktop side TOC may still appear on the second.
 yaml: |
-  - type: article
+  - paddingY:
+      desktop: md
+    type: article
     section_id: article-part-1
     show_toc: true
     toc_position: side
@@ -30,7 +32,9 @@ yaml: |
         url: /us/coding-bootcamps
         variant: primary
 
-  - type: article
+  - paddingY:
+      desktop: md
+    type: article
     section_id: article-part-2
     show_toc: false
     toc_group: bloomtech-review

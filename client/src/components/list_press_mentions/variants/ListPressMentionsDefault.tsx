@@ -82,7 +82,6 @@ export default function ListPressMentionsCards({ data }: ListPressMentionsCardsP
 
   return (
     <section
-      className="py-12 md:py-16"
       style={bgStyle}
       data-testid="section-press-mentions"
     >

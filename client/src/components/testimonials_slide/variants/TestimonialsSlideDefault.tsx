@@ -473,7 +473,7 @@ export default function TestimonialsSlide({ data }: TestimonialsSlideProps) {
 
   return (
     <section 
-      className={`py-12 md:py-16 ${data.background || ""}`}
+      className={data.background || ""}
       data-testid="section-testimonials-slide"
     >
       <div className="max-w-6xl mx-auto px-4 mb-8">

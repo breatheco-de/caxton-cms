@@ -826,7 +826,7 @@ export default function CareerSupportExplain({ data }: CareerSupportExplainProps
       style={sectionBackgroundStyle(data.background)}
       data-testid="section-career-support-explain"
     >
-      <div className="max-w-6xl mx-auto px-4 md:px-8 py-12 md:py-16">
+      <div className="max-w-6xl mx-auto px-4 md:px-8">
         {(heading || description) && (
           <div className="text-center mb-10">
             {heading && (

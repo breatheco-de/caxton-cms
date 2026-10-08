@@ -21,7 +21,7 @@ export default function FeaturesGridCardHeader({ data }: FeaturesGridCardHeaderP
 
   return (
     <section 
-      className={`py-14 ${backgroundClass}`}
+      className={backgroundClass}
       data-testid="section-features-grid-card-header"
     >
       <div className="max-w-6xl mx-auto px-4">

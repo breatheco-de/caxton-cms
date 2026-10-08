@@ -762,7 +762,7 @@ export default function AiFlexPathDragAndDrop({ data }: { data: AiFlexPathDragAn
   const SectionIcon = data.icon ? getIcon(data.icon) : null;
 
   return (
-    <div className="pb-16" style={{ fontFamily: "'Inter Variable',system-ui,-apple-system,sans-serif" }}>
+    <div style={{ fontFamily: "'Inter Variable',system-ui,-apple-system,sans-serif" }}>
       <div className="mx-auto">
         <div className="flex">
           <div className="w-28 flex-shrink-0 flex items-start justify-center pt-[2px]">
