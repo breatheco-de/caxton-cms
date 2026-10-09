@@ -1,3 +1,4 @@
+// section-spacing: overlay
 import { useEditModeOptional } from "@/contexts/EditModeContext";
 
 interface SchemaOrgDefaultProps {

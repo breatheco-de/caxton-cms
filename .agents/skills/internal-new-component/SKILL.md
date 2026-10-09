@@ -121,7 +121,8 @@ props:
 
 `getSectionWrapperStyles` in `client/src/components/SectionRenderer.tsx` applies the section's `background`, `paddingY` and `marginY` (default 0) around every component.
 
-- Do **not** put section-level `py-*` / `pt-*` / `pb-*` on the component root, and do not paint `data.background` in the TSX. Inner spacing (gaps, card padding) is fine.
+- Do **not** put section-level `py-*` / `pt-*` / `pb-*` / `my-*` / `mt-*` / `mb-*` on the component root (or on its first child unless that child is a card), and do not paint `data.background` in the TSX. Inner spacing (gaps, card padding) is fine.
+- `npm run check:section-spacing` enforces this on commit, build and `npm test`. If the design truly needs its own vertical padding, add `// section-spacing: self-padded` to the variant file and list the variant under `layout.self_padded` in schema.yml (overlays use `// section-spacing: overlay` with `layout.flow: out`).
 - Examples and page YAML carry `paddingY` (preset or px, `"lg xl"` = top/bottom, or `{ mobile, desktop }` switching at 768px).
 - Leave `layout.self_padded` unset unless the component truly paints its own vertical padding.
 - Reference: `client/src/components/vertical_bars_cards/variants/VerticalBarsCardsDefault.tsx` (no outer padding; spacing comes from the section).
@@ -166,7 +167,7 @@ Key paths: bare key for top-level (`layout`), `"items[].icon"` for array childre
 ## 4. Verify
 
 1. `npm run schema:sync -- --component=<type>` (then fill `best_for` / `avoid_when` / `content_shape` if sync left gaps). `npm run ensure:schema-yml` also runs on `predev` / `prebuild`.
-2. `npm run build`; related vitest (`npx vitest run <path>`).
+2. `npm run build` (its `prebuild` runs `check:section-spacing`); related vitest (`npx vitest run <path>`).
 3. Ask the user to check the example in the running app (`npm run dev`); do not start the dev server yourself.
 4. MCP, when the server runs the new code: `create_component_section_demo` for a demo page; `review_page_render` needs a public `SITE_URL`.
 5. Site-registry files (`site_*`) must be pushed to the content repo with a commit SHA (`.cursor/rules/site-content-github.mdc`). Shared-registry and TSX files are app-repo changes (commit only when asked).

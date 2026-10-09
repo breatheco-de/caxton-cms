@@ -1,3 +1,4 @@
+// section-spacing: overlay
 import { useState, useEffect, lazy, Suspense } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";

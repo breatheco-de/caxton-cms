@@ -1,3 +1,4 @@
+// section-spacing: self-padded
 import type { SpacerSection, SpacerSize } from "@shared/schema";
 import { cn } from "@/lib/utils";
 

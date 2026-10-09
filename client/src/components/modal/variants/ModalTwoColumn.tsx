@@ -1,3 +1,4 @@
+// section-spacing: overlay
 /**
  * ModalTwoColumn — overlay layout aligned with two_column (image + copy + CTAs).
  * Image hidden on mobile. CTAs are a generic buttons[] (link or dropdown via items).

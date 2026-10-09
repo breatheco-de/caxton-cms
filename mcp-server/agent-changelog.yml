@@ -6,12 +6,61 @@ window_days: 6
 
 entries:
   - date: "2026-10-08"
+    summary: "New get_leads_breakdown: staff Leads page numbers (channel vs UTM source / medium) for agents"
+    agent_impact:
+      - "get_leads_breakdown (metrics_view, read-only, one site per call): kpis, breakdowns (channels, source_medium, conversion_paths, landing_paths, experiments, time_to_lead) with drill-down filter per row. range 7d|30d|90d|all; filters channel/source/medium/conversion_path/landing_path/experiment/variant/ttl/product, \"(none)\" = empty."
+      - "Opt-in include_timeline (day/week series) and include_leads (latest 20 matching leads only, no paging, no personal data)."
+      - "Warnings: single_site, not_production_data, filters_match_nothing (+ next_action dropping the most specific filter), paid_count_differs_from_paid_traffic and source_medium_differs_from_channel (always), channel_tracking_partial, paid_rule_change_in_range, no_consent_leads."
+      - "Non-effects: get_paid_traffic and get_organic_traffic unchanged; use get_paid_traffic for spend / campaigns / cost per lead."
+    tools_changed: true
+    paths:
+      - mcp-server/tools/leads-breakdown.ts
+      - mcp-server/explain/ads.md
+      - shared/mcp-tool-catalog.ts
+  - date: "2026-10-08"
+    summary: "Lead ledger records the product; paused products count as lead conversions"
+    agent_impact:
+      - "lead_submissions stores product_id + product_slug (catalog-validated, paused included; NULL when unresolved or before migration 35). Staff Leads page filters with ?product=<id or slug>; product cards link there via 'Check Leads'."
+      - "resolveConversionProduct no longer rejects paused products: GA4 item_id is now sent for leads on paused products, so their 'Lead conversions (28d)' can rise from this date."
+      - "Non-effects: CRM payload unchanged (ledger_product_* keys are stripped); no MCP tool args or payloads changed."
+    tools_changed: false
+    paths:
+      - shared/resolveConversionProduct.ts
+      - server/ads/lead-ledger.ts
+      - server/ads/lead-product.ts
+      - mcp-server/explain/ads.md
+  - date: "2026-10-08"
+    summary: "Lead traffic channel + organic search leads in get_organic_traffic clusters"
+    agent_impact:
+      - "get_organic_traffic mode=clusters adds hubLeads / clusterLeads / members[].leads {organic_search, not_paid, tracked} and top-level leads {available, tracking_since, estimated, basis, selection_totals}; same window + market as clicks, credited to channel_landing_path. Use not_paid when leads.estimated (warnings organic_leads_partly_tracked / _not_tracked / _estimated / _unavailable)."
+      - "Lead ledger stores channel, first_channel, last_organic_channel, channel_landing_path, referrer_host, country, traffic_status (not sent to the CRM). Paid wins within 30 days; fbclid-only = meta_unclear on the staff Leads page only. Internal UTMs (own host / parent domain) are ignored by the session."
+      - "Non-effects: get_paid_traffic and Ads reports unchanged; utm_* never synthesized or rewritten; no CRM field added."
+    tools_changed: false
+    paths:
+      - mcp-server/lib/organic-traffic-mcp.ts
+      - server/seo-organic-leads.ts
+      - shared/traffic-channel.ts
+      - mcp-server/explain/seo.md
+      - mcp-server/explain/ads.md
+      - mcp-server/explain/lead-forms.md
+  - date: "2026-10-08"
+    summary: "Section spacing rule enforced in code (check:section-spacing)"
+    agent_impact:
+      - "Section variants may not set vertical padding/margin (py/pt/pb/my/mt/mb, style padding/margin) on their outermost element, or on its first child unless that child is a card. Fails pre-commit, prebuild (build and deploy) and npm test."
+      - "Exceptions are marker comments in the variant file: '// section-spacing: self-padded' (also list the variant under layout.self_padded) or '// section-spacing: overlay' (layout.flow: out). credibility_strip and lead_form carry self-padded markers pending a decision; their schema.yml does not list them yet (the check warns)."
+      - "Non-effects: no MCP tool args or payloads changed; content paddingY / marginY unaffected."
+    tools_changed: false
+    paths:
+      - scripts/section-spacing/lib.ts
+      - .husky/pre-commit
+      - mcp-server/explain/design.md
+  - date: "2026-10-08"
     summary: "Section outer padding moved from variant code into each section's paddingY"
     agent_impact:
       - "About 40 variants (banner, testimonials_slide, features_quad default, course_selector, graduates_stats, article, hero credibility, ...) no longer add their own outer py-*. Existing sections got the old padding added to paddingY (often px values like 48px or two-value 'md 80px'); live pages render the same."
       - "New sections of these types render with 0 vertical padding unless you set paddingY or insert from a registry example (examples were updated). Do not remove paddingY from these sections to 'fix' px values; that padding used to be in code."
       - "self_padded now: features_quad [laptopEdge], why_learn_ai [laptopEdge], project_showcase true; numbered_steps no longer self_padded. Variant names in self_padded match ignoring -/_/case (laptop-edge = laptopEdge)."
-      - "Non-effects: no MCP tool args or payload shapes changed; marginY and paddingX untouched. Where a variant root painted a Tailwind bg-* class around the moved padding, that section's background became the equivalent theme ID or hsl(var(...)) value."
+      - "Non-effects: no MCP tool args or payload shapes changed; marginY and paddingX untouched. Where a variant root painted a Tailwind bg-* class around the moved padding, that section's background became the equivalent theme ID (muted-30 was added to the 4geeks themes for bg-muted/30)."
     tools_changed: false
     paths:
       - scripts/section-padding/inventory.ts

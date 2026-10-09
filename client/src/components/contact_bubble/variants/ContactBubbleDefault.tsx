@@ -1,3 +1,4 @@
+// section-spacing: overlay
 import { useState } from "react";
 import { Pencil, MessageCircle } from "lucide-react";
 import type { ContactBubbleSection } from "@shared/schema";
