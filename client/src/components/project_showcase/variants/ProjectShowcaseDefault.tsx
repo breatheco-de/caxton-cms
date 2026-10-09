@@ -1,3 +1,4 @@
+// section-spacing: self-padded
 import { useState } from "react";
 import { ChevronLeft, ChevronRight, Github, Linkedin } from "lucide-react";
 import type { ProjectShowcaseSection, ProjectsShowcaseSection, ProjectShowcaseItem } from "@shared/schema";

@@ -17,7 +17,7 @@ A multi-site, content-driven marketing platform: Vite + React (SSR), Express, YA
 
 - **Content is YAML.** Pages, sections and copy live in `site_*` YAML; components render props and never hardcode content.
 - **Colors are theme IDs** from the site's `site_<name>/theme.json` (or the parent's). No hex, no Tailwind palette colors, no raw CSS colors in YAML. Shared components use only the shared base palette (`SHARED_BASE_PALETTE` in `shared/theme-palette.ts`).
-- **The section wrapper owns background and vertical spacing** (`background`, `paddingY`, `marginY` in section YAML). Components do not add outer `py-*` or paint `data.background`.
+- **The section wrapper owns background and vertical spacing** (`background`, `paddingY`, `marginY` in section YAML). Components do not add outer `py-*` or paint `data.background`. Enforced by `npm run check:section-spacing` (pre-commit, `prebuild`, `npm test`); a variant that must pad itself carries `// section-spacing: self-padded`.
 - **Icons are Lucide names** via `getIcon` (`client/src/lib/icons.ts`).
 - **`site_*` edits are pushed to the content repo in the same task**, with a commit SHA (`.cursor/rules/site-content-github.mdc`). App-repo commits only when the user asks.
 - **New API routes** use `api.*` with a rate policy (`.cursor/rules/api-rate-limits.mdc`).
@@ -29,5 +29,6 @@ A multi-site, content-driven marketing platform: Vite + React (SSR), Express, YA
 ```bash
 npm run build
 npm test
+npm run check:section-spacing               # no outer vertical padding/margin in section variants
 npm run schema:sync -- --component=<type>   # after registry schema changes
 ```

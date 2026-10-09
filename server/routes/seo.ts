@@ -915,6 +915,7 @@ export function registerSeoRoutes(app: Express): void {
       if (perspectiveRaw === "traffic") {
         const data = await buildTrafficClusterMetrics({
           seoIndex,
+          site: contentFolder,
           contentRoot,
           contentFolder,
           market: marketParam,

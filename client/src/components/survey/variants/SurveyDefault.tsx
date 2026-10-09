@@ -360,7 +360,7 @@ export default function SurveyDefault({ data }: { data: SurveyDefault }) {
 
   return (
     <div
-      className="py-4 md:px-4"
+      className="md:px-4"
       style={{ fontFamily: "'Inter Variable',system-ui,-apple-system,sans-serif" }}
     >
       <div className="mx-auto">

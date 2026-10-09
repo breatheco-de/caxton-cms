@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { UniversalImage } from "@/components/UniversalImage";
+import { RichTextContent } from "@/components/ui/rich-text-content";
 import type {
   CareerSupportExplainSection,
   CareerSupportTab,
@@ -838,12 +839,11 @@ export default function CareerSupportExplain({ data }: CareerSupportExplainProps
               </h2>
             )}
             {description && (
-              <p
+              <RichTextContent
+                html={description}
                 className="text-lg text-muted-foreground max-w-2xl mx-auto"
                 data-testid="text-career-description"
-              >
-                {description}
-              </p>
+              />
             )}
           </div>
         )}

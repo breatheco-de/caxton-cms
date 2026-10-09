@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {AlertTriangle, ArrowUpDown, Check, CheckCheck, ChevronDown, Cloud, Copy, Eye, FileText, Film, Folder, Image, Layers, Link as LinkIcon, ListChecks, Loader2, MoreHorizontal, Replace, Search, Settings, Square, SquareCheck, Stethoscope, Tags, Terminal, Trash2, Upload, Wand2, Wrench, X} from "lucide-react";
+import {AlertTriangle, ArrowUpDown, Check, CheckCheck, ChevronDown, Cloud, Copy, ExternalLink, Eye, FileText, Film, Folder, Image, Layers, Link as LinkIcon, ListChecks, Loader2, MoreHorizontal, Replace, Search, Settings, Square, SquareCheck, Stethoscope, Tags, Terminal, Trash2, Upload, Wand2, Wrench, X} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -2496,6 +2496,12 @@ export default function MediaGallery() {
                             >
                               <LinkIcon className="h-4 w-4 mr-2" />
                               Copy URL
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild data-testid={`button-open-new-tab-${id}`}>
+                              <a href={img.src} target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="h-4 w-4 mr-2" />
+                                Open in new tab
+                              </a>
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => openReplacePicker(id)}

@@ -1,4 +1,4 @@
-
+// section-spacing: self-padded
 import { useState, useEffect, type CSSProperties } from "react";
 import { useImageRegistry } from "@/components/UniversalImage";
 import type { CredibilityStripSection, CredibilityStripItem } from "@shared/schema";
