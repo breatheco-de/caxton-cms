@@ -48,6 +48,8 @@ let nowFn = () => Date.now();
 let buildId = resolveHtmlBuildId();
 const inflight = new Map<string, Promise<unknown>>();
 const generations = new Map<string, number>();
+/** Why the last miss for this key found nothing usable. Read by the rendered warning. */
+const diskMissReason = new Map<string, string>();
 
 function resolveHtmlBuildId(): string {
   const fromEnv = process.env.HTML_CACHE_BUILD_ID?.trim();
@@ -83,6 +85,7 @@ export function resetHtmlPageCacheForTests(): void {
   usedBytes = 0;
   inflight.clear();
   generations.clear();
+  diskMissReason.clear();
   byteBudget = DEFAULT_BYTE_BUDGET;
   nowFn = () => Date.now();
   buildId = resolveHtmlBuildId();
@@ -198,6 +201,13 @@ function evictUntilBudget(): void {
   while (usedBytes > byteBudget && cache.size > 0) {
     const oldest = cache.keys().next().value;
     if (oldest === undefined) break;
+    const parsed = parseHtmlCacheKey(oldest);
+    const pathname = parsed?.pathname ?? oldest;
+    const budgetMb = Math.max(1, Math.round(byteBudget / (1024 * 1024)));
+    log.warn(
+      { pathname, variantKey: parsed?.variantKey, siteId: parsed?.siteId, buildId },
+      `HTML cache dropped ${pathname}: over ${budgetMb}MB budget`,
+    );
     dropKey(oldest);
   }
 }
@@ -234,8 +244,12 @@ export function getCachedHtml(key: string): CachedHtmlPage | null {
     adoptDiskIfNewer(key);
   }
   const entry = cache.get(key);
-  if (!entry) return null;
+  if (!entry) {
+    rememberDiskMiss(key, inspectHtmlCacheDisk(key));
+    return null;
+  }
   if (isHardExpired(entry)) {
+    rememberDiskMiss(key, "disk rejected expired");
     dropKey(key);
     return null;
   }
@@ -251,6 +265,7 @@ export function getCachedHtml(key: string): CachedHtmlPage | null {
       { pathname, variantKey: parsed?.variantKey, siteId: parsed?.siteId },
       `HTML cache dropped ${pathname}: rebuild still pending after 8s`,
     );
+    rememberDiskMiss(key, "dropped, rebuild still pending after 8s");
     dropKey(key);
     return null;
   }
@@ -350,6 +365,46 @@ function persistEntry(key: string, entry: Stored): void {
   } catch (err) {
     log.warn({ err, key }, "html cache disk write failed");
   }
+}
+
+function rememberDiskMiss(key: string, reason: string): void {
+  diskMissReason.set(key, reason);
+  if (diskMissReason.size <= 500) return;
+  const first = diskMissReason.keys().next().value;
+  if (first) diskMissReason.delete(first);
+}
+
+/** Why this key has no usable copy. The rendered warning puts this in the message. */
+export function htmlCacheDiskReason(key: string): string {
+  return diskMissReason.get(key) ?? inspectHtmlCacheDisk(key);
+}
+
+function inspectHtmlCacheDisk(key: string): string {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(diskPathForKey(key), "utf8");
+  } catch {
+    return "no file";
+  }
+  let parsed: {
+    buildId?: string;
+    key?: string;
+    expiresAt?: number;
+    generation?: number;
+    br?: string;
+    gzip?: string;
+  };
+  try {
+    parsed = JSON.parse(raw) as typeof parsed;
+  } catch {
+    return "disk rejected unreadable";
+  }
+  if (parsed.buildId !== buildId) return `disk rejected wrong build ${parsed.buildId ?? "unknown"}`;
+  if (parsed.key !== key) return "disk rejected key mismatch";
+  if (!parsed.gzip || !parsed.br) return "disk rejected unreadable";
+  if (typeof parsed.expiresAt === "number" && nowFn() > parsed.expiresAt) return "disk rejected expired";
+  if ((parsed.generation ?? 0) < (generations.get(key) ?? 0)) return "disk rejected older generation";
+  return "on disk but not loaded";
 }
 
 function readDiskEntry(key: string): Stored | null {

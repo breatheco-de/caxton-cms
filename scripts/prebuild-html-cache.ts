@@ -45,7 +45,7 @@ async function runPrebuild(): Promise<void> {
   const { renderHubHtml } = await import("../server/render-hub-html");
   const { buildHtmlRebuildSite } = await import("../server/html-rebuild");
   const { getSitemapUrls, toActiveSiteCtx } = await import("../server/sitemap");
-  const { getHtmlBuildId } = await import("../server/html-page-cache");
+  const { getHtmlBuildId, canonicalHtmlCachePath } = await import("../server/html-page-cache");
   const { resolveLocaleHomeAliasTarget } = await import("../server/locale-home-alias");
   const { createPublicUrlResolver } = await import("../server/redirects");
   const { normalizePublicPath } = await import("../shared/public-app-routes");
@@ -78,6 +78,13 @@ async function runPrebuild(): Promise<void> {
               `prebuild skipped ${job.pathname}: no runtime`,
             );
             continue;
+          }
+          const canonical = canonicalHtmlCachePath(job.pathname, runtime.contentIndex);
+          if (canonical !== job.pathname) {
+            log.warn(
+              { pathname: job.pathname, canonical, siteId: job.siteId },
+              `prebuild ${job.pathname} does not match cache path ${canonical}`,
+            );
           }
           const rendered = await renderHubHtml({
             site: runtime,

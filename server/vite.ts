@@ -41,6 +41,8 @@ import {
   buildHtmlCacheKey,
   canonicalHtmlCachePath,
   getCachedHtml,
+  getHtmlBuildId,
+  htmlCacheDiskReason,
   htmlDocumentCacheControl,
   logHtmlRender,
   setCachedHtml,
@@ -522,12 +524,13 @@ export function serveStatic(app: Express) {
                 : "ssr_ok";
             if (pageOutcome === "ssr_ok") {
               const variantKey = (res.locals as any).htmlVariantKey || "live";
+              const build = getHtmlBuildId();
               const reason =
                 variantKey !== "live" && variantKey !== "default"
                   ? `variant ${variantKey}`
-                  : "no stored copy";
+                  : `${cachePath !== cleanUrlForSsr ? `lookup ${cachePath}, ` : ""}${htmlCacheDiskReason(cacheKey)} on ${build}`;
               ssrLogger.warn(
-                { url: cleanUrlForSsr, variantKey },
+                { url: cleanUrlForSsr, variantKey, cachePath, buildId: build },
                 `HTML cache miss ${cleanUrlForSsr}: ${reason}`,
               );
             }
